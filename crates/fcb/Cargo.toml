@@ -1,0 +1,26 @@
+[package]
+name = "fcb"
+version = "0.1.0"
+edition = "2021"
+description = "Forensic Case Bundle (FCB) codec — container, passphrase crypto, compression, evidence model"
+license = "MIT OR Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+ciborium = "0.2"
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
+ruzstd = "0.8"
+sha2 = "0.10"
+thiserror = "2"
+getrandom = "0.2"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+getrandom = { version = "0.2", features = ["js"] }
+
+[dev-dependencies]
+hex = "0.4"
