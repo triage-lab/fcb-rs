@@ -37,6 +37,15 @@ const FROZEN_WORK_HEX: &str = "8946434202010025010000a8716865616465725f736368656
 const FROZEN_CASE_BUNDLE_HASH: &str =
     "sha256:376d586b42b0e800a6e78fea8bfb9a68cb569d033cc324b7b9b1800fc508eccf";
 
+/// Frozen on-disk bytes of a real seven-field `Submission` (`.casework`),
+/// built with the fixed salt/nonce. Cross-impl baseline for `Submission`.
+const FROZEN_SUBMISSION_HEX: &str = "8946434202010025010000a8716865616465725f736368656d615f766572016a6d696e5f7265616465720167636173655f69646f61636d652d69722d323032362d30336b62756e646c655f686173686f7368613235363a6465616462656566636b6466a564616c676f686172676f6e3269646473616c749018531841184c18540102030405060708090a0b0c666d5f636f7374182066745f636f73740166705f636f7374016461656164a264616c676f71786368616368613230706f6c7931333035656e6f6e63659818000102030405060708090a0b0c0d0e0f1011121314151617696b65795f636865636b9820182f183218cc1218e5185d18780b18d118ca18a618bf18bb0b182d18f9184b187118db18da18de184c184a18770618ee18d618d7188918c7188518fa646d657461a0d9f8b055c0e9bffda126c4a990a8eb64e5044f3b1289b0e35e6f057a542050c638667aaa99afe65ab0f1ffdbc39634b61423dd464febd0660289a532b8a25740924d4d060266f2a5b4c1421710d763391235f4cb8703df685c623f736c8ba925a3b7cea9060c263777e7d47f7cf3d8a373fc344c602b78e468de6bdb7396ec47831ff2eb036a608f8d63957e7838f16ee8198def36175aad3d02d79a6614b3210d24e19642189d2ef91fb6d3829243043fe73f16ad8642a9c0808f76caf0d6f3595606f933c61614210befc711359e518446298827fb1c99489cc4adfda6a910159adbd6a042c186fdee6054cf32d485c0fce2acdde1d0c5";
+
+/// Frozen canonical plaintext payload bytes of the fixed case streams — the
+/// producer/consumer-shared `CasePayload` serialization. Complements
+/// `FROZEN_CASE_BUNDLE_HASH` (which pins the SHA-256 of these same bytes).
+const FROZEN_CASE_PAYLOAD_HEX: &str = "a16773747265616d7382a2626964627330677265636f7264738264657674316465767432a2626964627331677265636f7264738107";
+
 /// The fixed `.case` payload streams shared by the canonical-hash and pack_case
 /// tests (and identical to what `build_case` carries).
 fn fixed_case_streams() -> Vec<StreamData> {
@@ -145,6 +154,32 @@ fn build_work() -> Vec<u8> {
     build(BundleKind::Work, Value::Map(vec![]), payload)
 }
 
+/// The real seven-field `Submission` frozen by `FROZEN_SUBMISSION_HEX`. Header
+/// `case_id`/`bundle_hash` (from `build`) match the submission for binding.
+///
+/// These field values are pinned: changing any of them (or the fixed salt/nonce
+/// in `build`) changes the encrypted bytes and breaks `FROZEN_SUBMISSION_HEX` —
+/// update the constant deliberately if the layout intentionally changes.
+fn sample_submission() -> Submission {
+    Submission {
+        case_id: "acme-ir-2026-03".into(),
+        bundle_hash: "sha256:deadbeef".into(),
+        student: Student {
+            id: "s1234567".into(),
+            name: "Lin".into(),
+        },
+        notes: vec![Value::Text("pinned auth.log line 42".into())],
+        report: Value::Text("freeform report body".into()),
+        activity: vec![Value::Text("search: failed login".into())],
+        exported_at: "2026-06-20T10:00:00Z".into(),
+    }
+}
+
+fn build_submission() -> Vec<u8> {
+    let payload = cbor::encode(&sample_submission()).unwrap();
+    build(BundleKind::Work, Value::Map(vec![]), payload)
+}
+
 #[test]
 fn case_vector_is_byte_stable() {
     assert_eq!(
@@ -160,6 +195,49 @@ fn work_vector_is_byte_stable() {
         hex::encode(build_work()),
         FROZEN_WORK_HEX,
         "casework format drifted"
+    );
+}
+
+#[test]
+fn submission_vector_is_byte_stable() {
+    // Pins the on-disk bytes of the real seven-field `Submission` (additive;
+    // `FROZEN_WORK_HEX` still freezes the test-local 3-field `WorkPayload`).
+    assert_eq!(
+        hex::encode(build_submission()),
+        FROZEN_SUBMISSION_HEX,
+        "submission format drifted"
+    );
+}
+
+#[test]
+fn frozen_submission_vector_decodes_to_expected_structure() {
+    let bytes = hex::decode(FROZEN_SUBMISSION_HEX).unwrap();
+    let work = open_submission(&bytes, PASS).unwrap();
+    // All seven fields round-trip from the frozen bytes.
+    assert_eq!(work, sample_submission());
+    assert_eq!(
+        work.student,
+        Student {
+            id: "s1234567".into(),
+            name: "Lin".into()
+        }
+    );
+    assert_eq!(work.notes.len(), 1);
+    assert_eq!(work.activity.len(), 1);
+    assert_eq!(work.exported_at, "2026-06-20T10:00:00Z");
+}
+
+#[test]
+fn case_canonical_payload_is_byte_stable() {
+    // Pins the producer/consumer-shared canonical plaintext payload bytes,
+    // complementing the frozen hash of those same bytes.
+    let payload = CasePayload {
+        streams: fixed_case_streams(),
+    };
+    assert_eq!(
+        hex::encode(payload.to_canonical_bytes().unwrap()),
+        FROZEN_CASE_PAYLOAD_HEX,
+        "canonical case payload drifted"
     );
 }
 
