@@ -307,17 +307,72 @@ SIEM／log pipeline。
 | `msg` | `message` |
 | `raw` | `event.original` |
 
-### 3.2 `fcb.netflow.v1` / `fcb.json.v1`（內建但尚未定義）
+### 3.2 `fcb.netflow.v1`
 
-兩者列在 `BUILTIN_STREAM_TYPES`（`evidence.rs:18`）但**還沒有記錄 schema**——spec 與 crate 皆未定義其
-record schema，亦無對應的 frozen round-trip 測試（`stream_types.rs` 只凍 syslog）。
+每筆記錄 = 一個描述單一網路 flow 的 CBOR map。schema 由 `fcb-stream-types/spec.md` 的
+「fcb.netflow.v1 record schema」requirement 凍結，並以 `crates/fcb/tests/stream_types.rs` 的
+`netflow_v1_records_round_trip_byte_faithfully` 做 byte-faithful round-trip。
 
-- `fcb.json.v1`：預期是「通用 JSON 物件（任意 CBOR map）」，作為沒有專屬 schema 時的萬用容器。
-- `fcb.netflow.v1`：預期含五元組（src/dst IP+port + protocol）＋ bytes/packets ＋ 時間區間，但**尚未凍結**。
+> 與 syslog 一致：「CBOR 型別」是 wire 型別、「值域約束」是 spec-level validation——port 0–65535、`proto`
+> 的 IANA 語意皆為 spec 約束，**codec 不強制**（ciborium 接受任意 uint）。
 
-在 schema 定案前，這兩個 type 雖在 `BUILTIN_STREAM_TYPES` 內、`is_builtin` 會回 `true`，但消費端對其
-記錄形狀**不應有任何假設**；待真正要用時再比照 §3.1 syslog 流程定義（spec requirement + `stream_types.rs`
-round-trip 凍結）。此為已知缺口，見 §14。
+| 欄位 | CBOR 型別 | 值域約束 | 必填 | 說明 |
+|------|-----------|----------|:--:|------|
+| `ts_start` | text（RFC 3339） | UTC、結尾 `Z` | ✔ | flow 第一個封包的時間。 |
+| `ts_end` | text（RFC 3339） | UTC、結尾 `Z`、`>= ts_start` | ✔ | flow 最後一個封包的時間。 |
+| `src_ip` | text | IPv4 或 IPv6 | ✔ | 來源位址，照擷取樣子保留。 |
+| `dst_ip` | text | IPv4 或 IPv6 | ✔ | 目的位址。 |
+| `src_port` | uint | 0–65535（無 port 協定用 `0`） | ✔ | 來源埠。 |
+| `dst_port` | uint | 0–65535（無 port 協定用 `0`） | ✔ | 目的埠。 |
+| `proto` | uint | IANA 協定號（6=TCP、17=UDP、1=ICMP） | ✔ | 傳輸層協定。 |
+| `bytes` | uint | — | ✔ | flow 總位元組數。 |
+| `packets` | uint | — | ✔ | flow 總封包數。 |
+| `tcp_flags` | uint | — | | 整段 flow 觀察到的 TCP 旗標累積 OR（如 `0x02`=SYN）；僅 TCP flow。 |
+| `app` | text | — | | 選填的 L7／應用標籤（如 `tls`、`dns`）。 |
+
+**範例一（HTTPS TCP flow，含選填，`stream_types.rs` `netflow_tcp_record`）：**
+
+```json
+{
+  "ts_start": "2026-03-14T08:20:00.000Z",
+  "ts_end": "2026-03-14T08:20:03.500Z",
+  "src_ip": "10.0.0.5", "dst_ip": "203.0.113.10",
+  "src_port": 49512, "dst_port": 443, "proto": 6,
+  "bytes": 18452, "packets": 24,
+  "tcp_flags": 26, "app": "tls"
+}
+```
+
+**範例二（DNS UDP flow，僅必填，`netflow_udp_record`）：**
+
+```json
+{
+  "ts_start": "2026-03-14T08:19:58.000Z", "ts_end": "2026-03-14T08:19:58.040Z",
+  "src_ip": "10.0.0.5", "dst_ip": "10.0.0.1",
+  "src_port": 53124, "dst_port": 53, "proto": 17,
+  "bytes": 168, "packets": 2
+}
+```
+
+演進規則與 §3.1.1 相同（同版本只加選填欄位、破壞性變更升 `fcb.netflow.v2`）。
+
+### 3.3 `fcb.json.v1`
+
+每筆記錄 = 一個**任意 CBOR map**——作為沒有專屬 stream type 時的通用物件容器。schema 由
+`fcb-stream-types/spec.md` 的「fcb.json.v1 record schema」requirement 凍結，並以
+`json_v1_records_round_trip_byte_faithfully` 做 byte-faithful round-trip。
+
+- **無必填 key**；map key 為 text，value 為任意 CBOR（text／int／float／bool／null／array／巢狀 map）。
+- 消費端**逐位元保留**每個 key 與 value，**不得**丟棄、重排或強制轉型未知內容。
+
+**範例（巢狀 alert 物件，`json_nested_record`）：**
+
+```json
+{ "kind": "alert", "score": 0.91, "tags": ["beacon", "c2"], "meta": { "asn": 64512 } }
+```
+
+巢狀 `meta` map、`tags` array、float `score`、int `asn` round-trip 後皆原樣保留。最小合法記錄如
+`{ "k": "v" }`。
 
 ---
 
@@ -722,21 +777,20 @@ open：   ciphertext --(AEAD open，先 KCV 檢查)--> zstd frame --(zstd decomp
 
 **已知缺口（Known Gaps）：**
 
-> ✅ **已關閉（本批）：** `.case` payload 信封 helper 與 canonical `bundle_hash` 凍結。公開型別
-> `fcb::case::CasePayload { streams }` 與 `pack_case(&CaseInput, passphrase)` 統一生產／消費序列化；
-> `case::case_bundle_hash` 凍結 canonical `bundle_hash = sha256(明文 payload bytes)`（§13 步驟 4–5）。
+> ✅ **已關閉（本批）：** (1) `.case` payload 信封 helper 與 canonical `bundle_hash` 凍結——公開型別
+> `fcb::case::CasePayload { streams }` 與 `pack_case(&CaseInput, passphrase)` 統一生產／消費序列化、
+> `case::case_bundle_hash` 凍結 `bundle_hash = sha256(明文 payload bytes)`（§13 步驟 4–5）；(2)
+> **`fcb.netflow.v1` / `fcb.json.v1` 記錄 schema 凍結**（§3.2／§3.3，`stream_types.rs` round-trip 測試）。
 
-1. **`fcb.netflow.v1` / `fcb.json.v1` 記錄 schema 未定義。** 兩者在 `BUILTIN_STREAM_TYPES` 內、`is_builtin`
-   回 `true`，但 spec／crate／測試皆未凍結其 record schema（§3.2）。
-2. **WASM 綁定僅 `fcb_version`。** `crates/fcb/src/wasm.rs` 只導出 `fcb_version()`（回 `CARGO_PKG_VERSION`），
+1. **WASM 綁定僅 `fcb_version`。** `crates/fcb/src/wasm.rs` 只導出 `fcb_version()`（回 `CARGO_PKG_VERSION`），
    尚無 `openBundle`／`packSubmission` 等 richer binding（`wasm.rs:6-13`；註：`fcb-wasm` bridge crate 已有
    較完整的 native core）。
-3. **plugin parser registry 未實作。** `DecodedStream` 的註解提到 `is_builtin = false` 可落到「a registered
+2. **plugin parser registry 未實作。** `DecodedStream` 的註解提到 `is_builtin = false` 可落到「a registered
    plugin」（`evidence.rs:50`），但本 crate **沒有**任何 registry 程式碼——plugin registry 純屬消費端概念
    （另見下方 Non-Goals）。
-4. **payload 多餘 stream 的行為無測試斷言。** payload 含 manifest 未列的 stream 會被**靜默忽略**（§2 不變量，
+3. **payload 多餘 stream 的行為無測試斷言。** payload 含 manifest 未列的 stream 會被**靜默忽略**（§2 不變量，
    迭代由 manifest 驅動，`evidence.rs:78-92`），但此行為**沒有專屬測試**——是否刻意如此**未證實**。
-5. **`Submission` 無 byte-stability 凍結。** golden WORK 向量凍結的是 test-local 3 欄 `WorkPayload`，**非**
+4. **`Submission` 無 byte-stability 凍結。** golden WORK 向量凍結的是 test-local 3 欄 `WorkPayload`，**非**
    library 的 7 欄 `Submission`（詳見 §6）；目前無向量釘住 `Submission` 的 on-disk 位元組。
 
 **Non-Goals（本檔／本層不負責）：**

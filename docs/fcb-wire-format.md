@@ -476,9 +476,9 @@ primitive，對任意 bytes 算 hash；golden vector 的 header 仍用占位假�
 - **這不是封閉清單。** 未知 / 第三方 type（如 golden vector 的 `acme.edr.v1`）仍解析成 first-class
   stream，只是 `is_builtin == false`（`vectors.rs:137-138`、`evidence.rs:77-93`），消費端落
   generic table / timeline fallback、**不致命**。
-- 內建型別中目前只有 **`fcb.syslog.v1`** 有定義 schema（必填 `ts`/`host`/`msg`，選填
-  `raw`/`app`/`pid`/`severity`/`facility`/`msgid`/`sd`/`format`，演進規則與 ECS 對照見 data-model §3.1）。
-  `fcb.netflow.v1` / `fcb.json.v1` **在內建清單裡但 schema 尚未定義**（見 §9 已知缺口、data-model §3.2）。
+- 三個內建型別皆有凍結 schema：**`fcb.syslog.v1`**（data-model §3.1）、**`fcb.netflow.v1`**（5-tuple +
+  bytes/packets + 時間區間，data-model §3.2）、**`fcb.json.v1`**（任意 CBOR map 通用容器，data-model §3.3）；
+  各以 `crates/fcb/tests/stream_types.rs` 的 round-trip 測試凍結。
 
 stream 記錄的逐欄 schema、演進／相容規則一律見 [`fcb-data-model.md`](./fcb-data-model.md) §3，本檔不重述。
 
@@ -542,14 +542,13 @@ stream 記錄的逐欄 schema、演進／相容規則一律見 [`fcb-data-model.
 
 ## 9. 已知缺口（Known Gaps）與 Non-Goals
 
-> ✅ 已關閉（本批）：**公開 `pack_case` / `CasePayload` helper** 與 **canonical `bundle_hash` 凍結**。
-> `.case` 的 `{streams}` 信封現由公開型別 `fcb::case::CasePayload` 統一，golden vector、`stream_types.rs`、
-> WASM bridge 皆重用；`pack_case` 一步封裝並自動帶入 canonical `bundle_hash`（§5、§8）。
+> ✅ 已關閉（本批）：**公開 `pack_case` / `CasePayload` helper** 與 **canonical `bundle_hash` 凍結**
+> （`.case` 的 `{streams}` 信封現由公開型別 `fcb::case::CasePayload` 統一；`pack_case` 一步封裝並自動
+> 帶入 canonical `bundle_hash`，§5／§8）；以及 **`fcb.netflow.v1` / `fcb.json.v1` 記錄 schema 凍結**
+> （data-model §3.2／§3.3，`stream_types.rs` round-trip 測試）。
 
 ### 已知缺口（誠實標註，尚未實作 / 未凍結）
 
-- **`fcb.netflow.v1` / `fcb.json.v1` schema 未定義。** 兩者在 `BUILTIN_STREAM_TYPES` 內，但沒有
-  欄位 schema（`evidence.rs:18`、data-model §3.2）；目前只有 `fcb.syslog.v1` 有定義。
 - **plugin registry 未實作（消費端概念）。** `DecodedStream.is_builtin == false` 的註解提到「或一個
   registered plugin」（`evidence.rs:49-50`），但 crate 內**沒有任何 registry 程式碼**——plugin 派發是
   消費端（workbench／審閱平台）的事，不在 codec 範圍。codec 只回傳 `is_builtin` 旗標。

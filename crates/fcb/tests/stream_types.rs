@@ -83,13 +83,74 @@ fn minimal_record() -> Value {
     ])
 }
 
-/// Pack one `fcb.syslog.v1` stream through the public codec and return the
-/// decoded payload + the manifest used. Low Argon2 cost keeps it fast.
-fn round_trip(records: Vec<Value>) -> (CasePayload, StreamManifest) {
+/// The `fcb.netflow.v1` worked example: an HTTPS TCP flow with all nine
+/// REQUIRED fields plus the OPTIONAL `tcp_flags` and `app`. The values here are
+/// valid (port 443, proto 6), but the codec accepts any uint — range/IANA
+/// constraints are spec-level, not enforced by the encoder/decoder.
+fn netflow_tcp_record() -> Value {
+    record(vec![
+        ("ts_start", Value::Text("2026-03-14T08:20:00.000Z".into())),
+        ("ts_end", Value::Text("2026-03-14T08:20:03.500Z".into())),
+        ("src_ip", Value::Text("10.0.0.5".into())),
+        ("dst_ip", Value::Text("203.0.113.10".into())),
+        ("src_port", Value::Integer(49512.into())),
+        ("dst_port", Value::Integer(443.into())),
+        ("proto", Value::Integer(6.into())),
+        ("bytes", Value::Integer(18452.into())),
+        ("packets", Value::Integer(24.into())),
+        ("tcp_flags", Value::Integer(26.into())),
+        ("app", Value::Text("tls".into())),
+    ])
+}
+
+/// The `fcb.netflow.v1` minimal example: a UDP (DNS) flow with only the nine
+/// REQUIRED fields (no `tcp_flags`/`app`).
+fn netflow_udp_record() -> Value {
+    record(vec![
+        ("ts_start", Value::Text("2026-03-14T08:19:58.000Z".into())),
+        ("ts_end", Value::Text("2026-03-14T08:19:58.040Z".into())),
+        ("src_ip", Value::Text("10.0.0.5".into())),
+        ("dst_ip", Value::Text("10.0.0.1".into())),
+        ("src_port", Value::Integer(53124.into())),
+        ("dst_port", Value::Integer(53.into())),
+        ("proto", Value::Integer(17.into())),
+        ("bytes", Value::Integer(168.into())),
+        ("packets", Value::Integer(2.into())),
+    ])
+}
+
+/// The `fcb.json.v1` worked example: an arbitrary nested object with a float,
+/// an array, and a nested map.
+fn json_nested_record() -> Value {
+    record(vec![
+        ("kind", Value::Text("alert".into())),
+        ("score", Value::Float(0.91)),
+        (
+            "tags",
+            Value::Array(vec![Value::Text("beacon".into()), Value::Text("c2".into())]),
+        ),
+        (
+            "meta",
+            Value::Map(vec![(
+                Value::Text("asn".into()),
+                Value::Integer(64512.into()),
+            )]),
+        ),
+    ])
+}
+
+/// The `fcb.json.v1` minimal example: a single-entry map.
+fn json_minimal_record() -> Value {
+    record(vec![("k", Value::Text("v".into()))])
+}
+
+/// Pack one typed stream through the public codec and return the decoded
+/// payload + the manifest used. Low Argon2 cost keeps it fast.
+fn round_trip(stream_type: &str, records: Vec<Value>) -> (CasePayload, StreamManifest) {
     let count = records.len() as u64;
     let manifest = StreamManifest {
         id: "s0".into(),
-        stream_type: "fcb.syslog.v1".into(),
+        stream_type: stream_type.into(),
         records: count,
     };
     let meta = manifest_to_meta(std::slice::from_ref(&manifest)).unwrap();
@@ -117,7 +178,7 @@ fn round_trip(records: Vec<Value>) -> (CasePayload, StreamManifest) {
 #[test]
 fn syslog_v1_records_round_trip_byte_faithfully() {
     let originals = vec![rfc5424_record(), rfc3164_record(), minimal_record()];
-    let (decoded, manifest) = round_trip(originals.clone());
+    let (decoded, manifest) = round_trip("fcb.syslog.v1", originals.clone());
 
     // Every field of every record survives the full pack/open path verbatim.
     assert_eq!(
@@ -134,7 +195,7 @@ fn syslog_v1_records_round_trip_byte_faithfully() {
 #[test]
 fn syslog_v1_minimal_record_round_trips() {
     let originals = vec![minimal_record()];
-    let (decoded, manifest) = round_trip(originals.clone());
+    let (decoded, manifest) = round_trip("fcb.syslog.v1", originals.clone());
 
     assert_eq!(
         decoded.streams[0].records, originals,
@@ -143,6 +204,38 @@ fn syslog_v1_minimal_record_round_trips() {
 
     let streams = decode_streams(&manifest_vec(manifest), &decoded.streams).unwrap();
     assert_eq!(streams[0].stream_type, "fcb.syslog.v1");
+    assert!(streams[0].is_builtin);
+}
+
+#[test]
+fn netflow_v1_records_round_trip_byte_faithfully() {
+    let originals = vec![netflow_tcp_record(), netflow_udp_record()];
+    let (decoded, manifest) = round_trip("fcb.netflow.v1", originals.clone());
+
+    // The 5-tuple, counts, time range, and optional flags survive verbatim.
+    assert_eq!(
+        decoded.streams[0].records, originals,
+        "fcb.netflow.v1 record schema drifted under round-trip"
+    );
+
+    let streams = decode_streams(&manifest_vec(manifest), &decoded.streams).unwrap();
+    assert_eq!(streams[0].stream_type, "fcb.netflow.v1");
+    assert!(streams[0].is_builtin);
+}
+
+#[test]
+fn json_v1_records_round_trip_byte_faithfully() {
+    let originals = vec![json_nested_record(), json_minimal_record()];
+    let (decoded, manifest) = round_trip("fcb.json.v1", originals.clone());
+
+    // Nested maps, arrays, floats, and ints all survive verbatim.
+    assert_eq!(
+        decoded.streams[0].records, originals,
+        "fcb.json.v1 record schema drifted under round-trip"
+    );
+
+    let streams = decode_streams(&manifest_vec(manifest), &decoded.streams).unwrap();
+    assert_eq!(streams[0].stream_type, "fcb.json.v1");
     assert!(streams[0].is_builtin);
 }
 
