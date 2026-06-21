@@ -12,7 +12,7 @@
 > ### ⚠️ 安全須知（接 codec 前先讀）
 >
 > - **明文 header（含框架前綴）現已被 AEAD 認證。** container 的 header（含 `case_id`、`bundle_hash`、manifest、task）雖然在磁碟上仍是明文（salt/nonce/KDF 參數必須在推 key 前就讀得到），但整段「容器前綴」（magic、KIND、container_version、hdr_len、完整 header CBOR）會被綁進 XChaCha20-Poly1305 的 **additional authenticated data（AAD）**。任何對 header 任一 byte 的竄改都會破壞 AEAD tag，`open`／`openCase`／`openSubmission` 一律以 **Corrupt** 失敗——封檔後就無法在不知道密碼的情況下偷改 header 而不被發現。
-> - **`.case` 開檔還會額外核對 `bundle_hash` 內容位址。** 對 `.case` 而言 `bundle_hash` 就是 canonical payload 的 SHA-256，所以 `openCase` 會對**解密後的 payload 重算** canonical `bundle_hash` 並與 header 比對，不符即 **Corrupt**——擋下「header 與 payload 不一致」的偽造檔。（`.casework` 的 header `bundle_hash` 是**綁定參照**、指向某個 `.case` 的證物版本，並非 submission payload 自身的 hash，故 `openSubmission` **不**重算它。）
+> - **`.case` 開檔還會額外核對 `bundle_hash` 內容定址。** 對 `.case` 而言 `bundle_hash` 就是 canonical payload 的 SHA-256，所以 `openCase` 會對**解密後的 payload 重算** canonical `bundle_hash` 並與 header 比對，不符即 **Corrupt**——擋下「header 與 payload 不一致」的偽造檔。（`.casework` 的 header `bundle_hash` 是**綁定參照**、指向某個 `.case` 的證物版本，並非 submission payload 自身的 hash，故 `openSubmission` **不**重算它。）
 > - **`.casework` 收件端的 binding 檢查仍是必要的，不是選用的。** AEAD 只保證 header「未被竄改」，不保證學生填進去的 `case_id`／`bundle_hash` 真的對得上你手上的那份 `.case`。收件時請以**解密後** `Submission` 裡的 `case_id` 與 `bundle_hash` 走 `verify_binding`（§1.6 / §5），而不是只看欄位長相。
 > - **仍存在的設計性提醒（by design）：** `bundle_hash` 是對**明文 payload** 算的 content hash，對低熵 payload 會構成一個 **confirmation oracle**（攻擊者若能猜出 payload，便能用公開的 `bundle_hash` 驗證猜測）；且此 binding 對「**重新封裝**」敏感——只要 payload 的 canonical 位元組有任何差異，重算出的 `bundle_hash` 就會不同，無法以此判定「語意上等價」的兩份證物。
 > - **每次封裝都產新的隨機 salt/nonce。** `pack_case` 與 `pack_submission` 內部會各自產出 fresh salt（16 B）與 nonce（24 B）。**千萬不要跨 bundle 快取或重用 key／nonce**，這份隨機性正是安全邊界所在。

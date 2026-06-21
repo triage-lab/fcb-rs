@@ -30,7 +30,7 @@ match verify_binding(&work.case_id, &work.bundle_hash, &case_id, &case_bundle_ha
 
 **目標**：教師改完證物後重發 `.case`，`bundle_hash` 也跟著變。這時要能抓出哪些學生還拿著舊版作答。
 
-`bundle_hash` 其實是證物版本的內容位址。重發之後，新 `.case` 的 `header.bundle_hash` 和舊的就不一樣了。學生作答帶的若是舊 `bundle_hash`，`verify_binding` 會回 `EvidenceVersionMismatch`——`case_id` 相同、`bundle_hash` 不同。處理方式跟 Recipe 1 一樣，把這個狀態當成「需重做」的提示就好。
+`bundle_hash` 其實是證物版本的內容定址。重發之後，新 `.case` 的 `header.bundle_hash` 和舊的就不一樣了。學生作答帶的若是舊 `bundle_hash`，`verify_binding` 會回 `EvidenceVersionMismatch`——`case_id` 相同、`bundle_hash` 不同。處理方式跟 Recipe 1 一樣，把這個狀態當成「需重做」的提示就好。
 
 涉及：`binding::verify_binding` 的三態。延伸：[`fcb-data-model.md`](./fcb-data-model.md) §5（binding）。
 
