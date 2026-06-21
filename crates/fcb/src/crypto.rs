@@ -10,7 +10,7 @@
 //! so publishing a hash of the key does not meaningfully help an attacker.
 
 use argon2::{Algorithm, Argon2, Params, Version};
-use chacha20poly1305::aead::{Aead, KeyInit};
+use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{Key, XChaCha20Poly1305, XNonce};
 use sha2::{Digest, Sha256};
 
@@ -64,35 +64,41 @@ fn nonce_from(nonce: &[u8]) -> Result<&XNonce> {
     Ok(XNonce::from_slice(nonce))
 }
 
-/// Seal plaintext with the key and nonce. Used by the pack path.
-pub fn seal(key: &[u8; KEY_LEN], nonce: &[u8], plaintext: &[u8]) -> Result<Vec<u8>> {
+/// Seal plaintext with the key and nonce, binding `aad` as the AEAD's
+/// additional authenticated data. Used by the pack path; `aad` is the plaintext
+/// container prefix (magic, KIND, version, hdr_len, header) so any header tamper
+/// breaks the tag. Pass `&[]` when there is nothing to authenticate.
+pub fn seal(key: &[u8; KEY_LEN], nonce: &[u8], plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
     let nonce = nonce_from(nonce)?;
     cipher_for(key)
-        .encrypt(nonce, plaintext)
+        .encrypt(nonce, Payload { msg: plaintext, aad })
         .map_err(|_| FcbError::Malformed("AEAD encryption failure".into()))
 }
 
-/// Raw AEAD open. Any verification failure maps to [`FcbError::Corrupt`];
-/// prefer [`open_payload`] when a KCV is available to distinguish wrong keys.
-pub fn open(key: &[u8; KEY_LEN], nonce: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>> {
+/// Raw AEAD open. Any verification failure — including an `aad` that does not
+/// match the one used to seal — maps to [`FcbError::Corrupt`]; prefer
+/// [`open_payload`] when a KCV is available to distinguish wrong keys.
+pub fn open(key: &[u8; KEY_LEN], nonce: &[u8], ciphertext: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
     let nonce = nonce_from(nonce)?;
     cipher_for(key)
-        .decrypt(nonce, ciphertext)
+        .decrypt(nonce, Payload { msg: ciphertext, aad })
         .map_err(|_| FcbError::Corrupt)
 }
 
 /// Open a payload, distinguishing a wrong passphrase from tampering using the
-/// header's key-check value.
+/// header's key-check value. `aad` must equal the bytes bound at seal time
+/// (the container prefix); a mismatch fails as [`FcbError::Corrupt`].
 pub fn open_payload(
     key: &[u8; KEY_LEN],
     expected_kcv: &[u8],
     nonce: &[u8],
     ciphertext: &[u8],
+    aad: &[u8],
 ) -> Result<Vec<u8>> {
     if !ct_eq(&key_check_value(key), expected_kcv) {
         return Err(FcbError::WrongPassphrase);
     }
-    open(key, nonce, ciphertext)
+    open(key, nonce, ciphertext, aad)
 }
 
 /// Constant-time byte comparison (avoids leaking via early-exit timing).
@@ -122,15 +128,17 @@ mod tests {
         }
     }
 
+    const AAD: &[u8] = b"container-prefix-aad";
+
     #[test]
     fn correct_passphrase_round_trips() {
         let kdf = test_kdf(b"salt-aaaa");
         let key = derive_key("hunter2", &kdf).unwrap();
         let kcv = key_check_value(&key);
         let nonce = [7u8; NONCE_LEN];
-        let ct = seal(&key, &nonce, b"top secret evidence").unwrap();
+        let ct = seal(&key, &nonce, b"top secret evidence", AAD).unwrap();
 
-        let pt = open_payload(&key, &kcv, &nonce, &ct).unwrap();
+        let pt = open_payload(&key, &kcv, &nonce, &ct, AAD).unwrap();
         assert_eq!(pt, b"top secret evidence");
     }
 
@@ -140,12 +148,12 @@ mod tests {
         let key = derive_key("hunter2", &kdf).unwrap();
         let kcv = key_check_value(&key);
         let nonce = [7u8; NONCE_LEN];
-        let ct = seal(&key, &nonce, b"top secret evidence").unwrap();
+        let ct = seal(&key, &nonce, b"top secret evidence", AAD).unwrap();
 
         // Same salt, different passphrase -> different key -> KCV mismatch.
         let wrong = derive_key("password", &kdf).unwrap();
         assert_eq!(
-            open_payload(&wrong, &kcv, &nonce, &ct).unwrap_err(),
+            open_payload(&wrong, &kcv, &nonce, &ct, AAD).unwrap_err(),
             FcbError::WrongPassphrase
         );
     }
@@ -156,13 +164,37 @@ mod tests {
         let key = derive_key("hunter2", &kdf).unwrap();
         let kcv = key_check_value(&key);
         let nonce = [7u8; NONCE_LEN];
-        let mut ct = seal(&key, &nonce, b"top secret evidence").unwrap();
+        let mut ct = seal(&key, &nonce, b"top secret evidence", AAD).unwrap();
 
         // Right key (KCV passes) but a flipped byte -> AEAD fails -> Corrupt.
         ct[0] ^= 0x01;
         assert_eq!(
-            open_payload(&key, &kcv, &nonce, &ct).unwrap_err(),
+            open_payload(&key, &kcv, &nonce, &ct, AAD).unwrap_err(),
             FcbError::Corrupt
+        );
+    }
+
+    #[test]
+    fn aad_mismatch_is_corrupt() {
+        // Sealing binds the AAD into the tag: opening with different AAD (a
+        // tampered header prefix) fails as Corrupt even with the right key.
+        let kdf = test_kdf(b"salt-dddd");
+        let key = derive_key("hunter2", &kdf).unwrap();
+        let kcv = key_check_value(&key);
+        let nonce = [7u8; NONCE_LEN];
+        let ct = seal(&key, &nonce, b"top secret evidence", AAD).unwrap();
+
+        // Same key, same ciphertext, but the AAD differs by one byte.
+        let mut tampered_aad = AAD.to_vec();
+        tampered_aad[0] ^= 0x01;
+        assert_eq!(
+            open_payload(&key, &kcv, &nonce, &ct, &tampered_aad).unwrap_err(),
+            FcbError::Corrupt
+        );
+        // The original AAD still opens cleanly.
+        assert_eq!(
+            open_payload(&key, &kcv, &nonce, &ct, AAD).unwrap(),
+            b"top secret evidence"
         );
     }
 
@@ -170,7 +202,7 @@ mod tests {
     fn bad_nonce_length_is_malformed() {
         let key = [0u8; KEY_LEN];
         assert!(matches!(
-            seal(&key, &[0u8; 12], b"x"),
+            seal(&key, &[0u8; 12], b"x", b""),
             Err(FcbError::Malformed(_))
         ));
     }

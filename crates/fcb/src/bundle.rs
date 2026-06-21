@@ -6,7 +6,7 @@ use ciborium::value::Value;
 
 use crate::compress;
 use crate::container::{
-    read_container, write_container, AeadParams, BundleKind, Header, KdfParams,
+    encode_prefix, read_container, AeadParams, BundleKind, Header, KdfParams,
 };
 use crate::crypto::{self, NONCE_LEN};
 use crate::error::{FcbError, Result};
@@ -70,11 +70,12 @@ pub fn pack_bytes(params: &BundleParams, payload: &[u8], passphrase: &str) -> Re
     let nonce = random_bytes(NONCE_LEN)?;
     let key = crypto::derive_key(passphrase, &kdf)?;
     let key_check = crypto::key_check_value(&key);
-    let ciphertext = compress::pack_payload(&key, &nonce, payload)?;
 
     let header = Header {
         header_schema_ver: 1,
-        min_reader: 1,
+        // v2: the plaintext header is now AEAD-authenticated (bound as AAD); a
+        // pre-AAD v1 reader must refuse rather than misopen.
+        min_reader: 2,
         case_id: params.case_id.clone(),
         bundle_hash: params.bundle_hash.clone(),
         kdf,
@@ -85,19 +86,32 @@ pub fn pack_bytes(params: &BundleParams, payload: &[u8], passphrase: &str) -> Re
         key_check,
         meta: params.meta.clone(),
     };
-    write_container(params.kind, &header, &ciphertext)
+    // Bind the whole plaintext prefix (magic, KIND, version, hdr_len, header) as
+    // AEAD additional authenticated data, then append the sealed payload to it.
+    let prefix = encode_prefix(params.kind, &header)?;
+    let ciphertext = compress::pack_payload(&key, &header.aead.nonce, payload, &prefix)?;
+    let mut out = prefix;
+    out.extend_from_slice(&ciphertext);
+    Ok(out)
 }
 
 /// Open a sealed FCB container to its kind, plaintext header, and decrypted +
-/// decompressed payload bytes.
+/// decompressed payload bytes. The plaintext prefix preceding the payload is the
+/// AEAD additional authenticated data, so any header tamper fails as `Corrupt`.
 pub fn open_bytes(bytes: &[u8], passphrase: &str) -> Result<(BundleKind, Header, Vec<u8>)> {
     let container = read_container(bytes)?;
+    // The AAD is exactly the bytes preceding the payload, i.e. everything the
+    // pack path bound via encode_prefix. read_container hands back the payload
+    // as the tail slice, so the prefix length is the remainder.
+    let prefix_len = bytes.len() - container.payload.len();
+    let aad = &bytes[..prefix_len];
     let key = crypto::derive_key(passphrase, &container.header.kdf)?;
     let payload = compress::unpack_payload(
         &key,
         &container.header.key_check,
         &container.header.aead.nonce,
         &container.payload,
+        aad,
     )?;
     Ok((container.kind, container.header, payload))
 }
@@ -148,5 +162,31 @@ mod tests {
             open_bytes(&bytes, "nope").unwrap_err(),
             FcbError::WrongPassphrase
         );
+    }
+
+    #[test]
+    fn header_tamper_is_corrupt() {
+        // The plaintext header is bound as AAD. Flip a byte of a header field
+        // value (the case_id string) — the header still parses and the
+        // passphrase is right, but the AAD no longer matches the sealed tag, so
+        // the open fails as Corrupt rather than returning tampered data.
+        let params = fast_params(BundleKind::Case);
+        let mut bytes = pack_bytes(&params, b"some evidence payload", "pw").unwrap();
+        let needle = b"case-1";
+        let pos = bytes
+            .windows(needle.len())
+            .position(|w| w == needle)
+            .expect("case_id appears in the plaintext header");
+        bytes[pos] ^= 0x01;
+        assert_eq!(open_bytes(&bytes, "pw").unwrap_err(), FcbError::Corrupt);
+    }
+
+    #[test]
+    fn packs_declare_min_reader_2() {
+        // New bundles require an AAD-aware (v2) reader.
+        let params = fast_params(BundleKind::Case);
+        let bytes = pack_bytes(&params, b"x", "pw").unwrap();
+        let (_kind, header, _payload) = open_bytes(&bytes, "pw").unwrap();
+        assert_eq!(header.min_reader, 2);
     }
 }

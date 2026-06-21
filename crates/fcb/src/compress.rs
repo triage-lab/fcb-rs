@@ -40,20 +40,28 @@ pub fn decompress(data: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-/// Pack a payload: **compress, then encrypt**.
-pub fn pack_payload(key: &[u8; KEY_LEN], nonce: &[u8], plaintext: &[u8]) -> Result<Vec<u8>> {
+/// Pack a payload: **compress, then encrypt**. `aad` is bound into the AEAD tag
+/// (the plaintext container prefix) so any header tamper is detected on open.
+pub fn pack_payload(
+    key: &[u8; KEY_LEN],
+    nonce: &[u8],
+    plaintext: &[u8],
+    aad: &[u8],
+) -> Result<Vec<u8>> {
     let compressed = compress(plaintext)?;
-    crypto::seal(key, nonce, &compressed)
+    crypto::seal(key, nonce, &compressed, aad)
 }
 
-/// Unpack a payload: **decrypt, then decompress** (reverse order).
+/// Unpack a payload: **decrypt, then decompress** (reverse order). `aad` must
+/// equal the bytes bound at pack time; a mismatch fails as `Corrupt`.
 pub fn unpack_payload(
     key: &[u8; KEY_LEN],
     expected_kcv: &[u8],
     nonce: &[u8],
     ciphertext: &[u8],
+    aad: &[u8],
 ) -> Result<Vec<u8>> {
-    let compressed = crypto::open_payload(key, expected_kcv, nonce, ciphertext)?;
+    let compressed = crypto::open_payload(key, expected_kcv, nonce, ciphertext, aad)?;
     decompress(&compressed)
 }
 
@@ -76,14 +84,16 @@ mod tests {
         (key, kcv)
     }
 
+    const AAD: &[u8] = b"prefix";
+
     #[test]
     fn payload_round_trips() {
         let (key, kcv) = key_kcv();
         let nonce = [3u8; NONCE_LEN];
         // Repetitive data so compression actually does something.
         let data = b"login failed login failed login failed login failed".repeat(20);
-        let packed = pack_payload(&key, &nonce, &data).unwrap();
-        let out = unpack_payload(&key, &kcv, &nonce, &packed).unwrap();
+        let packed = pack_payload(&key, &nonce, &data, AAD).unwrap();
+        let out = unpack_payload(&key, &kcv, &nonce, &packed, AAD).unwrap();
         assert_eq!(out, data);
     }
 
@@ -94,11 +104,11 @@ mod tests {
         let data = b"alpha beta alpha beta alpha beta".repeat(10);
 
         let compressed = compress(&data).unwrap();
-        let packed = pack_payload(&key, &nonce, &data).unwrap();
+        let packed = pack_payload(&key, &nonce, &data, AAD).unwrap();
 
         // Decrypting the packed payload yields exactly the zstd frame, proving
         // encryption wraps already-compressed bytes.
-        let decrypted = open(&key, &nonce, &packed).unwrap();
+        let decrypted = open(&key, &nonce, &packed, AAD).unwrap();
         assert_eq!(decrypted, compressed);
         // The inner bytes are a real zstd frame...
         assert_eq!(&compressed[0..4], &ZSTD_MAGIC);

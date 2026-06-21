@@ -25,8 +25,11 @@ pub const MAGIC: [u8; 4] = [0x89, b'F', b'C', b'B'];
 pub const CONTAINER_VERSION: u16 = 1;
 
 /// Highest `min_reader` this codec can satisfy. A bundle demanding more is
-/// refused gracefully rather than misparsed.
-pub const READER_VERSION: u16 = 1;
+/// refused gracefully rather than misparsed. Bumped to 2 when the plaintext
+/// header became AEAD-authenticated (bound as additional authenticated data):
+/// a v1 reader has no AAD step and would fail to open v2 bundles, so v2 bundles
+/// declare `min_reader = 2` to make pre-AAD readers refuse them gracefully.
+pub const READER_VERSION: u16 = 2;
 
 /// Distinguishes a challenge bundle from a student submission.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,15 +136,27 @@ pub fn encode_header(header: &Header) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
-/// Frame a container into its on-disk bytes. `payload` is written verbatim.
-pub fn write_container(kind: BundleKind, header: &Header, payload: &[u8]) -> Result<Vec<u8>> {
+/// Serialize the plaintext container prefix that precedes the payload: magic,
+/// KIND, `container_version`, `hdr_len`, and the header CBOR. This is exactly
+/// the byte range bound as the AEAD additional authenticated data, so the pack
+/// path seals against these bytes and the open path reconstructs the identical
+/// slice from what it read — any tamper of magic, KIND, version, or any header
+/// field changes the AAD and fails authentication.
+pub fn encode_prefix(kind: BundleKind, header: &Header) -> Result<Vec<u8>> {
     let hdr = encode_header(header)?;
-    let mut out = Vec::with_capacity(4 + 1 + 2 + 4 + hdr.len() + payload.len());
+    let mut out = Vec::with_capacity(4 + 1 + 2 + 4 + hdr.len());
     out.extend_from_slice(&MAGIC);
     out.push(kind.to_u8());
     out.extend_from_slice(&CONTAINER_VERSION.to_le_bytes());
     out.extend_from_slice(&(hdr.len() as u32).to_le_bytes());
     out.extend_from_slice(&hdr);
+    Ok(out)
+}
+
+/// Frame a container into its on-disk bytes: the [`encode_prefix`] bytes
+/// followed by `payload` verbatim.
+pub fn write_container(kind: BundleKind, header: &Header, payload: &[u8]) -> Result<Vec<u8>> {
+    let mut out = encode_prefix(kind, header)?;
     out.extend_from_slice(payload);
     Ok(out)
 }

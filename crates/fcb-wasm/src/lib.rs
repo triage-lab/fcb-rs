@@ -154,6 +154,16 @@ pub fn open_case(bytes: &[u8], passphrase: &str) -> Result<CaseView, FcbError> {
             kind_label(kind)
         )));
     }
+    // Verify the declared content address against the actual payload. The header
+    // is now AEAD-authenticated, but AAD only guarantees the bundle_hash field
+    // was not tampered — not that the producer's value matches the payload. For
+    // a `.case`, bundle_hash IS the hash of the canonical payload, so recompute
+    // and compare; a mismatch is a malformed/forged bundle -> Corrupt. (A
+    // `.casework` header bundle_hash is a binding reference to its case, not the
+    // hash of the submission payload, so open_work does not do this.)
+    if binding::compute_bundle_hash(&payload) != header.bundle_hash {
+        return Err(FcbError::Corrupt);
+    }
     let manifest = evidence::manifest_from_meta(&header.meta)?;
     let case_payload: CasePayload = fcb::cbor::decode(&payload)?;
     let decoded = evidence::decode_streams(&manifest, &case_payload.streams)?;
@@ -366,15 +376,17 @@ mod tests {
         })
         .unwrap();
         // The encrypted body uses the crate's public envelope type.
-        let payload = fcb::cbor::encode(&CasePayload {
+        let case_payload = CasePayload {
             streams: vec![StreamData {
                 id: "s0".into(),
                 records: vec![syslog_record()],
             }],
-        })
-        .unwrap();
-        let mut params =
-            BundleParams::new(BundleKind::Case, "acme-ir-2026-03", "sha256:deadbeef", meta);
+        };
+        // bundle_hash must equal the canonical payload's hash — open_case now
+        // verifies the content address.
+        let bundle_hash = fcb::case::case_bundle_hash(&case_payload).unwrap();
+        let payload = fcb::cbor::encode(&case_payload).unwrap();
+        let mut params = BundleParams::new(BundleKind::Case, "acme-ir-2026-03", bundle_hash, meta);
         params.m_cost = 32; // fast Argon2 for tests
         params.t_cost = 1;
         params.p_cost = 1;
@@ -412,6 +424,46 @@ mod tests {
                 }],
             },
         }
+    }
+
+    #[test]
+    fn open_case_rejects_bundle_hash_mismatch() {
+        // A .case whose header bundle_hash does not match its canonical payload
+        // must fail as Corrupt at open — even though the header is now
+        // AEAD-authenticated and the passphrase is correct — because open_case
+        // recomputes and verifies the content address.
+        #[derive(Serialize)]
+        struct CaseMeta {
+            streams: Vec<StreamManifest>,
+            task: TaskSpec,
+        }
+        let manifest = vec![StreamManifest {
+            id: "s0".into(),
+            stream_type: "fcb.syslog.v1".into(),
+            records: 1,
+        }];
+        let meta = fcb::cbor::to_value(&CaseMeta {
+            streams: manifest,
+            task: sample_task(),
+        })
+        .unwrap();
+        let payload = fcb::cbor::encode(&CasePayload {
+            streams: vec![StreamData {
+                id: "s0".into(),
+                records: vec![syslog_record()],
+            }],
+        })
+        .unwrap();
+        // Deliberately wrong content address (does not hash the payload above).
+        let mut params =
+            BundleParams::new(BundleKind::Case, "acme-ir-2026-03", "sha256:deadbeef", meta);
+        params.m_cost = 32;
+        params.t_cost = 1;
+        params.p_cost = 1;
+        let bytes = pack_bytes(&params, &payload, PASS).unwrap();
+        assert_eq!(open_case(&bytes, PASS).unwrap_err(), FcbError::Corrupt);
+        // A correctly-hashed case still opens fine.
+        assert!(open_case(&build_case(), PASS).is_ok());
     }
 
     #[test]
