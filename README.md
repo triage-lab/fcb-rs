@@ -3,23 +3,23 @@
 [![ci](https://github.com/triage-lab/fcb-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/triage-lab/fcb-rs/actions/workflows/ci.yml)
 [![license: ECL-2.0](https://img.shields.io/badge/license-ECL--2.0-blue.svg)](./LICENSE)
 
-**FCB（Forensic Case Bundle）協定的權威 Rust 實作**——一個把證物（evidence）封裝成可攜、加密、可驗證的 `.case` / `.casework` 檔的 codec。原為 browser-arena 數位鑑識教學平台的一部分，現抽出為獨立 repo。
+**FCB（Forensic Case Bundle）協定的權威 Rust 實作。** 說穿了，它就是一個 codec：把證物（evidence）封裝成可攜、加密、又能驗證的 `.case` / `.casework` 檔。這套程式碼原本長在 browser-arena 數位鑑識教學平台裡，後來抽出來自成一個獨立 repo。
 
-一份 codec、兩個編譯目標：**native**（出題 CLI、教師審閱平台）與 **WASM**（瀏覽器 workbench）。核心相依全為純 Rust（`ruzstd` / `argon2` / `chacha20poly1305` / `sha2`），無 C FFI，因此能編到 `wasm32`。
+同一份 codec，編兩個目標。native 那一側餵的是出題 CLI 和教師審閱平台，WASM 那一側則跑在瀏覽器 workbench。核心相依清一色純 Rust——`ruzstd`、`argon2`、`chacha20poly1305`、`sha2`——一個 C FFI 都沒有，所以它才編得到 `wasm32`。
 
 ## FCB 是什麼？
 
-- **`.case`**（KIND=case）：教師端出的題目，裝著 N 條具型別的證物 stream（syslog / netflow / json …）與一份**不含答案**的 task spec。
-- **`.casework`**（KIND=work）：學生端的作答，裝著筆記、報告、活動紀錄，並以 `case_id` + `bundle_hash` 綁回特定題目與證物版本。
+- **`.case`**（KIND=case）是教師端出的題目。裡頭塞著 N 條具型別的證物 stream（syslog、netflow、json 等等），外加一份 task spec——而且這份 spec **不含答案**。
+- 學生交回來的作答則是 **`.casework`**（KIND=work），裝著筆記、報告和活動紀錄。它靠 `case_id` 加 `bundle_hash` 綁回某一道題、某一個證物版本，跑不掉。
 
-容器格式：`magic ‖ KIND ‖ container_version ‖ header(明文 CBOR) ‖ payload(= AEAD(zstd(明文)))`，以 passphrase 經 Argon2id 派生金鑰。逐位元的權威定義見 [`docs/fcb-wire-format.md`](./docs/fcb-wire-format.md) 與 [`docs/fcb-reference.md`](./docs/fcb-reference.md)。
+容器長這樣：`magic ‖ KIND ‖ container_version ‖ header(明文 CBOR) ‖ payload(= AEAD(zstd(明文)))`。金鑰是拿 passphrase 過一遍 Argon2id 派生出來的。想看逐位元、不留模糊空間的權威定義，翻 [`docs/fcb-wire-format.md`](./docs/fcb-wire-format.md) 和 [`docs/fcb-reference.md`](./docs/fcb-reference.md)。
 
 ## Repo 結構
 
 | 路徑 | 內容 |
 | ---- | ---- |
 | `crates/fcb` | codec 本體：container、crypto、compression、evidence/stream 模型、task、submission、`case`（`pack_case`）。 |
-| `crates/fcb-wasm` | WASM / JS bridge——瀏覽器 workbench 的進出點（`peekHeader` / `openCase` / `packSubmission` …）。 |
+| `crates/fcb-wasm` | WASM / JS bridge，也就是瀏覽器 workbench 的進出口（`peekHeader`、`openCase`、`packSubmission` 等）。 |
 | `docs/` | 協定的權威文件：[`fcb-wire-format`](./docs/fcb-wire-format.md)、[`fcb-data-model`](./docs/fcb-data-model.md)、[`fcb-reference`](./docs/fcb-reference.md)、[`docs/README`](./docs/README.md)。 |
 | `openspec/` | Spectra 規格（`specs/`）與變更提案（`changes/`）。 |
 
@@ -33,7 +33,7 @@
 fcb = { git = "https://github.com/triage-lab/fcb-rs", package = "fcb" }
 ```
 
-打包一份 `.case`（producer）與開封（consumer）：
+下面這段一次走完兩端：producer 打包一份 `.case`，consumer 再把它開封。
 
 ```rust
 use ciborium::value::Value;
@@ -61,7 +61,7 @@ assert_eq!(kind, fcb::container::BundleKind::Case);
 assert_eq!(header.case_id, "demo");
 ```
 
-完整、會過測試的範例見 [`docs/README.md`](./docs/README.md) 與 `crates/fcb/tests/`。
+想要更完整、而且真的會過測試的範例，去看 [`docs/README.md`](./docs/README.md) 和 `crates/fcb/tests/`。
 
 ### WASM / JS（瀏覽器或 Node）
 
@@ -69,7 +69,7 @@ assert_eq!(header.case_id, "demo");
 wasm-pack build crates/fcb-wasm --target web      # 或 --target nodejs / bundler
 ```
 
-產出的 `pkg/` 匯出 `peekHeader(bytes)`、`openCase(bytes, passphrase)`、`openSubmission(bytes, passphrase)`、`packSubmission(submission, passphrase)`、`computeBundleHash(bytes)`、`verifyBinding(...)`、`workKey(caseId)`，並以可辨識的 error kind（`bad-magic` / `wrong-passphrase` / `corrupt` …）回報。整合細節見 [`crates/fcb-wasm/src/lib.rs`](./crates/fcb-wasm/src/lib.rs)。
+build 完的 `pkg/` 會把這幾支匯出去：`peekHeader(bytes)`、`openCase(bytes, passphrase)`、`openSubmission(bytes, passphrase)`、`packSubmission(submission, passphrase)`、`computeBundleHash(bytes)`、`verifyBinding(...)` 還有 `workKey(caseId)`。出錯時它不會只丟個含糊的錯誤，而是回一個你認得出來的 error kind——`bad-magic`、`wrong-passphrase`、`corrupt` 之類的。整合上的細節都在 [`crates/fcb-wasm/src/lib.rs`](./crates/fcb-wasm/src/lib.rs)。
 
 ## Build / Test
 
@@ -80,23 +80,23 @@ cargo clippy --all-targets --all-features -- -D warnings
 wasm-pack build crates/fcb-wasm --target nodejs
 ```
 
-CI（[`.github/workflows/ci.yml`](./.github/workflows/ci.yml)）會在每次 push 到 `main` 與每個 PR 跑 `cargo test --workspace` 與 `wasm32` build smoke。
+CI 設定在 [`.github/workflows/ci.yml`](./.github/workflows/ci.yml)。每次 push 進 `main`、每個 PR，它都會跑一遍 `cargo test --workspace`，再加一道 `wasm32` build smoke 把關。
 
 ## 文件入口
 
-- **整合指南（消費端 getting-started）**：[`docs/fcb-integration-guide.md`](./docs/fcb-integration-guide.md)
-- **Cookbook（常見任務 recipes）**：[`docs/fcb-cookbook.md`](./docs/fcb-cookbook.md)
-- **協定 wire format**：[`docs/fcb-wire-format.md`](./docs/fcb-wire-format.md)
-- **資料模型 / stream schema**：[`docs/fcb-data-model.md`](./docs/fcb-data-model.md)
-- **逐位元 reference / golden vectors / error 目錄**：[`docs/fcb-reference.md`](./docs/fcb-reference.md)
-- **總覽與可跑範例**：[`docs/README.md`](./docs/README.md)
-- **變更歷史**：[`CHANGELOG.md`](./CHANGELOG.md)
+- 第一次串接、想從消費端起步：**整合指南** [`docs/fcb-integration-guide.md`](./docs/fcb-integration-guide.md)
+- 手邊有具體任務、想照抄 recipe：**Cookbook** [`docs/fcb-cookbook.md`](./docs/fcb-cookbook.md)
+- 協定的 **wire format**：[`docs/fcb-wire-format.md`](./docs/fcb-wire-format.md)
+- **資料模型與 stream schema**：[`docs/fcb-data-model.md`](./docs/fcb-data-model.md)
+- 要對到逐位元、golden vectors、error 目錄：**reference** [`docs/fcb-reference.md`](./docs/fcb-reference.md)
+- 想先看總覽、跑跑可執行範例：[`docs/README.md`](./docs/README.md)
+- 歷次改了什麼：**變更歷史** [`CHANGELOG.md`](./CHANGELOG.md)
 
 ## 貢獻與安全
 
-- 貢獻流程與品質關卡見 [`CONTRIBUTING.md`](./CONTRIBUTING.md)；社群準則見 [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md)。
-- 安全漏洞請依 [`SECURITY.md`](./SECURITY.md) 的**私密**管道回報，勿開 public issue。
+- 想送 PR，先看 [`CONTRIBUTING.md`](./CONTRIBUTING.md) 把流程和品質關卡摸熟；和大家相處的那一套規矩寫在 [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md)。
+- 發現安全漏洞，請走 [`SECURITY.md`](./SECURITY.md) 列的**私密**管道回報，千萬別開成 public issue。
 
 ## 授權
 
-採 **Educational Community License, Version 2.0（ECL-2.0）**，見 [`LICENSE`](./LICENSE)。© 2026 The fcb-rs Authors。
+本專案採 **Educational Community License, Version 2.0（ECL-2.0）**，完整條款在 [`LICENSE`](./LICENSE)。© 2026 The fcb-rs Authors。

@@ -30,8 +30,8 @@ container 佈局與 crypto 重點（§8–§12），但兩者數值必須一致�
 | stream **records**（實際證物事件） | 加密 payload | ✘（要解密） |
 | 學生 notes／report／activity | 加密 payload（`.casework`） | ✘ |
 
-設計意圖：解鎖前就能顯示「這是哪個 case、裡面有哪些 stream、題目要做什麼」；證物本體與學生作品才需密碼。
-明文 header 含 salt／nonce／cost 是刻意的——在還沒有 key 之前，reader 必須先讀到這些才能推導 key
+設計意圖：解鎖前就能顯示「這是哪個 case、裡面有哪些 stream、題目要做什麼」。證物本體與學生作品才需密碼。
+明文 header 含 salt／nonce／cost 是刻意的：在還沒有 key 之前，reader 必須先讀到這些才能推導 key
 （`crates/fcb/src/container.rs:12-13`）。
 
 > **安全注意：** 明文 header **未被 AEAD 認證**（AEAD 只認證 payload，無 AAD，見 §11）。`case_id` /
@@ -126,7 +126,7 @@ StreamData = {
 }
 ```
 
-`StreamData`（`evidence.rs:37-39`）只有 `id: String` 與 `records: Vec<Value>` 兩欄；**不帶 `type`**——
+`StreamData`（`evidence.rs:37-39`）只有 `id: String` 與 `records: Vec<Value>` 兩欄，**不帶 `type`**：
 型別只活在 manifest，payload 靠 `id` join。`StreamData` derive `PartialEq` 但**不** derive `Eq`
 （因 `Vec<Value>` 不是 `Eq`，`evidence.rs:36`）。
 
@@ -164,19 +164,19 @@ BUILTIN_STREAM_TYPES = ["fcb.syslog.v1", "fcb.netflow.v1", "fcb.json.v1"]   // e
 is_builtin_type(t) = BUILTIN_STREAM_TYPES.contains(&t)                       // evidence.rs:21-23
 ```
 
-這份清單**只表示「有內建 handler」，不是封閉清單**——任何 namespaced type 都是一等公民，未知 type
+這份清單**只表示「有內建 handler」，不是封閉清單**。任何 namespaced type 都是一等公民，未知 type
 **不致命**。`is_builtin_type` 是**精確字串比對**（大小寫敏感、不做 namespace prefix 或 version-agnostic
 比對）：`fcb.syslog.v2` 會回 `false`。
 
 `decode_streams` 為每條 stream 標 `is_builtin`（`DecodedStream.is_builtin`，`evidence.rs:49-51`）。
 `is_builtin = false` 的 stream 仍照常解出，只是消費端落到**通用 table/timeline fallback**（或某個註冊進
-plugin registry 的 parser；註：plugin registry 是消費端概念，本 crate **未**實作）。經測試證實：未知 type
+plugin registry 的 parser；plugin registry 是消費端概念，本 crate **未**實作）。經測試證實：未知 type
 `vendor.unknown.v3` 夾在兩個已知 type 之間，三條 stream 全部解出、中間 `is_builtin = false`、外兩
 `true`，不中斷其他 stream（`evidence.rs:136-152`，`#[test]` attribute 在 :135）。
 
 > **兩層測試、刻意分工（讀 §3.1 前先看）：** byte-stability 的 golden vector（`vectors.rs`）刻意用便宜的
 > placeholder 記錄（syslog 記錄是 `Value::Text("evt1")`／`("evt2")`，`vectors.rs:88`；EDR 記錄是
-> `Value::Integer(7)`，`vectors.rs:89`），好讓 frozen hex 保持精簡——這些**不是**真實 schema 記錄。真正
+> `Value::Integer(7)`，`vectors.rs:89`），好讓 frozen hex 保持精簡。這些**不是**真實 schema 記錄。真正
 > 凍結 `fcb.syslog.v1` 欄位集的是另一支 round-trip 測試 `crates/fcb/tests/stream_types.rs`（以 byte-faithful
 > 打包→開封鎖住欄位集／key 名／value 型別），對應的 spec 在 `openspec/specs/fcb-stream-types/spec.md`。
 > 因此 §3.1 的 worked example 來源是 `stream_types.rs`、與上面的 placeholder 是兩套不同記錄、彼此不衝突。
@@ -185,9 +185,9 @@ plugin registry 的 parser；註：plugin registry 是消費端概念，本 crat
 
 每筆記錄 = 一個 CBOR map。
 
-**核心原則（最重要）：** `raw` 是**無損真相**——當 `raw` 存在時，它逐字保留原始整行、為該記錄的權威來源
+**核心原則（最重要）：** `raw` 是**無損真相**。當 `raw` 存在時，它逐字保留原始整行、為該記錄的權威來源
 （`spec.md` "Raw line is the authoritative source"）。其他解析欄位皆為**盡力而為（best-effort）**的衍生值，
-**不得**作為事件的唯一表示；消費端必須能從 `raw` 重新解析回任一解析欄位，且只要保留 `raw`，原始行上的
+**不得**作為事件的唯一表示。消費端必須能從 `raw` 重新解析回任一解析欄位，且只要保留 `raw`，原始行上的
 資訊就不會遺失。
 
 > **「CBOR 型別」欄是 wire 型別、「值域約束」欄是 spec-level validation。** 兩者刻意分開：`severity`／
@@ -567,7 +567,7 @@ Submission = {
 | `activity` | `Vec<Value>` | `activity` | **是**（每元素為不透明 CBOR） | submission.rs:37 |
 | `exported_at` | `String` | `exported_at` | 否 | submission.rs:39 |
 
-`notes` / `report` / `activity` 在 container 層是**不透明 CBOR**——schema 由 browser workbench 擁有，
+`notes` / `report` / `activity` 在 container 層是**不透明 CBOR**：schema 由 browser workbench 擁有，
 case builder **不需要**關心（case builder 只產 `.case`）。所有 7 欄皆**無** serde default → 解碼時全必填。
 `Submission` derive `PartialEq` 但**不** derive `Eq`（因含 `Value`，`submission.rs:25`）；`Student` 則
 derive `Eq`。
@@ -638,7 +638,7 @@ key（作品隔離，`binding.rs:90-94`）。實體 IndexedDB store 屬消費端
 
 - **`.case` 裡零答案／零評分標準／零步驟解答**；答案只留在教師母版與審閱平台。
 - 型別上 `TaskStep` 根本沒有答案欄位（`task.rs:30-36`），解碼經過 typed model 會把任何夾帶的答案欄位
-  **丟掉**——因為沒有欄位能裝它。
+  **丟掉**，因為沒有欄位能裝它。
 - 防呆：`FORBIDDEN_ANSWER_KEYS = ["answer", "answer_key", "rubric", "solution", "expected"]`（5 個，
   `task.rs:17-18`）；`contains_answer_fields(value)`（`task.rs:67-79`）遞迴檢查解出的 task 是否仍含這些
   key（消費端可 assert）。遞迴只走 `Value::Map`／`Value::Array`；scalar leaf 回 `false`；forbidden-key
@@ -801,7 +801,7 @@ open：   ciphertext --(AEAD open，先 KCV 檢查)--> zstd frame --(zstd decomp
   primitive 本身不強制，§7／§11）；亦**不**靠 AEAD 保護明文 header。
 - 實體 IndexedDB／儲存層**不**在 binding 範疇（`work_key` 只給 key 字串）。
 
-剩餘缺口建議「回頭在 `fcb` crate 定 schema」，而非只在消費端自幹——這樣 browser 端、case builder、
+剩餘缺口建議「回頭在 `fcb` crate 定 schema」，而非只在消費端自幹。這樣 browser 端、case builder、
 教師平台三方共用同一份真實程式碼，從根本杜絕格式漂移。`.case` 產出已可直接用 `fcb::case::pack_case`。
 
 ---

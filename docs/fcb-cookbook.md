@@ -1,14 +1,14 @@
 # FCB Cookbook（常見任務 recipes）
 
-任務導向的速查：每則 recipe 給**目標**與**涉及的呼叫**。完整脈絡看 [`fcb-integration-guide.md`](./fcb-integration-guide.md)；逐位元權威看 [`fcb-reference.md`](./fcb-reference.md)、[`fcb-data-model.md`](./fcb-data-model.md)、[`fcb-wire-format.md`](./fcb-wire-format.md)。
+任務導向的速查。每則 recipe 只給你兩樣東西：**目標**，以及**會用到哪些呼叫**。想看完整脈絡就翻 [`fcb-integration-guide.md`](./fcb-integration-guide.md)，想要逐位元的權威說法則查 [`fcb-reference.md`](./fcb-reference.md)、[`fcb-data-model.md`](./fcb-data-model.md)、[`fcb-wire-format.md`](./fcb-wire-format.md)。
 
-> 安全前提（見整合指南「安全須知」）：明文 header 未經 AEAD 認證，**收件端必須驗 binding**，且要信任的是**解密後 payload** 的值。
+> 動手前先記住一件事（整合指南「安全須知」講得更細）：明文 header 沒經過 AEAD 認證，所以**收件端一定要驗 binding**，而且能信的只有**解密後 payload** 裡的值。
 
 ---
 
 ## Recipe 1：收件——開封並驗 submission binding
 
-**目標**：平台收到學生 `.casework`，確認它對應正確的題目與證物版本後才入帳。
+**目標**：平台收到學生交來的 `.casework`，要先確認它對得上正確的題目和證物版本，才能入帳。
 
 ```rust
 use fcb::submission::open_submission;
@@ -28,9 +28,9 @@ match verify_binding(&work.case_id, &work.bundle_hash, &case_id, &case_bundle_ha
 
 ## Recipe 2：重發 case 後偵測「版本不符」
 
-**目標**：教師修正證物後重發 `.case`（`bundle_hash` 改變）；學生若拿舊版作答，要能偵測。
+**目標**：教師改完證物後重發 `.case`，`bundle_hash` 也跟著變。這時要能抓出哪些學生還拿著舊版作答。
 
-`bundle_hash` 是證物版本的內容位址。重發後新 `.case` 的 `header.bundle_hash` 與舊的不同；學生作答帶的是舊 `bundle_hash`，於是 `verify_binding` 回 `EvidenceVersionMismatch`（同 `case_id`、不同 `bundle_hash`）。處理同 Recipe 1，把該狀態當「需重做」提示。
+`bundle_hash` 其實是證物版本的內容位址。重發之後，新 `.case` 的 `header.bundle_hash` 和舊的就不一樣了。學生作答帶的若是舊 `bundle_hash`，`verify_binding` 會回 `EvidenceVersionMismatch`——`case_id` 相同、`bundle_hash` 不同。處理方式跟 Recipe 1 一樣，把這個狀態當成「需重做」的提示就好。
 
 涉及：`binding::verify_binding` 的三態。延伸：[`fcb-data-model.md`](./fcb-data-model.md) §5（binding）。
 
@@ -38,7 +38,7 @@ match verify_binding(&work.case_id, &work.bundle_hash, &case_id, &case_bundle_ha
 
 ## Recipe 3：解碼某個 stream type 的記錄
 
-**目標**：開封 `.case` 後，取出某條 stream 的記錄並判斷有沒有內建 handler。
+**目標**：開封 `.case` 之後，把某條 stream 的記錄撈出來，順便看看它有沒有內建 handler。
 
 ```rust
 use fcb::bundle::open_bytes;
@@ -56,15 +56,15 @@ for s in streams.iter().filter(|s| s.stream_type == "fcb.netflow.v1") {
 }
 ```
 
-`is_builtin == false` 代表沒有內建 handler，消費端走 generic table/timeline fallback。涉及：`evidence::{decode_streams, manifest_from_meta}`、`case::CasePayload`。延伸：[`fcb-data-model.md`](./fcb-data-model.md) §3（各 stream type schema）。
+`is_builtin == false` 就表示沒有對應的內建 handler，這時消費端改走 generic table/timeline fallback。涉及：`evidence::{decode_streams, manifest_from_meta}`、`case::CasePayload`。延伸：[`fcb-data-model.md`](./fcb-data-model.md) §3（各 stream type schema）。
 
 ---
 
 ## Recipe 4：用 golden vector 驗跨實作相容性
 
-**目標**：用非 Rust 重寫 codec，想確認與本實作逐位元相容。
+**目標**：你用非 Rust 重寫了一份 codec，想確認它跟本實作逐位元相容。
 
-拿 `crates/fcb/tests/vectors.rs` 的 `FROZEN_*_HEX`（`FROZEN_CASE_HEX` / `FROZEN_WORK_HEX` / `FROZEN_SUBMISSION_HEX`）`hex::decode` 後，用你的實作以同一組固定 salt/nonce 與密碼（`"lab-pass"`）重建，**逐位元比對**；或反向解密後比對結構。`FROZEN_CASE_BUNDLE_HASH` / `FROZEN_CASE_PAYLOAD_HEX` 則驗 canonical 序列化與雜湊。最關鍵的互通陷阱（ciborium 把 `Vec<u8>` 編成 CBOR array-of-uint）見 [`fcb-reference.md`](./fcb-reference.md)。
+先把 `crates/fcb/tests/vectors.rs` 裡的 `FROZEN_*_HEX`（`FROZEN_CASE_HEX` / `FROZEN_WORK_HEX` / `FROZEN_SUBMISSION_HEX`）`hex::decode` 出來。接著有兩條路：一是用你的實作搭同一組固定 salt/nonce 與密碼（`"lab-pass"`）重建一份，再**逐位元比對**；二是反向解密回來，比對結構對不對得上。至於 `FROZEN_CASE_BUNDLE_HASH` / `FROZEN_CASE_PAYLOAD_HEX`，是拿來驗 canonical 序列化與雜湊的。最容易踩到的互通陷阱——ciborium 會把 `Vec<u8>` 編成 CBOR array-of-uint——在 [`fcb-reference.md`](./fcb-reference.md) 講得很清楚。
 
 涉及：`crates/fcb/tests/vectors.rs` 的 frozen 向量。延伸：整合指南 §4。
 
@@ -72,9 +72,9 @@ for s in streams.iter().filter(|s| s.stream_type == "fcb.netflow.v1") {
 
 ## Recipe 5：分辨「密碼錯」與「檔案被竄改」
 
-**目標**：開封失敗時，給使用者正確的下一步——重輸密碼，還是拒收檔案。
+**目標**：開封失敗時，告訴使用者該怎麼辦——是重輸密碼，還是乾脆拒收這個檔案。
 
-codec 用明文 header 裡的 key-check value 把兩者分開：`WrongPassphrase`（KCV 不符，密碼錯）vs `Corrupt`（KCV 對但 AEAD 驗證失敗，內容被竄改/毀損）。
+codec 靠明文 header 裡的 key-check value 把這兩種情況分開。`WrongPassphrase` 是 KCV 不符，代表密碼打錯；`Corrupt` 則是 KCV 對得上、但 AEAD 驗證沒過，表示內容被竄改或毀損了。
 
 ```rust
 use fcb::FcbError;
@@ -87,13 +87,13 @@ match fcb::bundle::open_bytes(&bytes, passphrase) {
 }
 ```
 
-WASM/JS 端用 bridge 的 `error_kind` 字串（`wrong-passphrase` / `corrupt` / …），分流範例見整合指南 §2.3。涉及：`FcbError`、bridge `error_kind`。延伸：整合指南 §3、[`fcb-reference.md`](./fcb-reference.md)（error 目錄）。
+在 WASM/JS 這端，改看 bridge 的 `error_kind` 字串（`wrong-passphrase` / `corrupt` / …）來分流，範例在整合指南 §2.3。涉及：`FcbError`、bridge `error_kind`。延伸：整合指南 §3、[`fcb-reference.md`](./fcb-reference.md)（error 目錄）。
 
 ---
 
 ## Recipe 6：不需密碼先顯示題目資訊
 
-**目標**：在使用者輸入密碼前，先顯示這是哪個 case、有哪些 stream、題目敘述。
+**目標**：使用者還沒輸入密碼前，就先把這是哪個 case、有哪些 stream、題目敘述等資訊顯示出來。
 
 ```rust
 use fcb::container::peek_header;
@@ -105,4 +105,4 @@ let manifest = manifest_from_meta(&header.meta)?;   // .case 才有
 let task = task_from_meta(&header.meta)?;            // Option<TaskSpec>
 ```
 
-WASM/JS 用 `peekHeader(bytes)`。涉及：`container::peek_header`、`evidence::manifest_from_meta`、`task::task_from_meta`。延伸：整合指南 §1.2、§2.2。
+WASM/JS 這邊呼叫 `peekHeader(bytes)` 就行。涉及：`container::peek_header`、`evidence::manifest_from_meta`、`task::task_from_meta`。延伸：整合指南 §1.2、§2.2。

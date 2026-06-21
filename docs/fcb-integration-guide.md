@@ -1,20 +1,20 @@
 # FCB 整合指南（Integration Guide）
 
-從**消費端**角度把 `fcb-rs` 接起來：開封 `.case`、產出 `.casework`、在瀏覽器接 WASM bridge。協定的逐位元細節不在這裡重述——需要時請看權威文件：
+這份指南站在**消費端**角度，帶你把 `fcb-rs` 接起來：開封 `.case`、產出 `.casework`、在瀏覽器接 WASM bridge。協定的逐位元細節這裡不重述，要查的時候請翻權威文件：
 
 - 容器與封裝：[`fcb-wire-format.md`](./fcb-wire-format.md)
 - 資料模型與 stream schema：[`fcb-data-model.md`](./fcb-data-model.md)
 - 逐位元 reference / golden vectors / error 目錄：[`fcb-reference.md`](./fcb-reference.md)
 - 總覽與最小範例：[`README.md`](./README.md)
 
-兩個角色檔案：**`.case`**（KIND=case，教師出的題目＋證物）與 **`.casework`**（KIND=work，學生作答）。`.casework` 以 `case_id` + `bundle_hash` 綁回特定題目與證物版本。
+這裡有兩種角色檔案。一是 **`.case`**（KIND=case），裝的是教師出的題目加上證物；二是 **`.casework`**（KIND=work），裝的是學生作答。`.casework` 靠 `case_id` 加 `bundle_hash` 綁回特定題目與證物版本。
 
 > ### ⚠️ 安全須知（接 codec 前先讀）
 >
-> - **明文 header 未被 AEAD 認證。** container 的 header（含 `case_id`、`bundle_hash`、manifest、task）是**明文、未簽章**——只有 payload 經 AEAD 驗證。任何能產檔的人都能在 header 填任意值。因此**收件端的 binding 檢查是必要的、不是選用的**（§1.6 / §5）；要信任的是「**解密後 payload** 裡的值」與「對 payload 重算的 canonical `bundle_hash`」，不是 header 上的字串。
-> - **每次封裝都產新的隨機 salt/nonce。** `pack_case` / `pack_submission` 內部各自產生 fresh salt（16 B）與 nonce（24 B）。**不要跨 bundle 快取或重用 key／nonce**——這份隨機性就是安全邊界。
-> - **passphrase 是使用者輸入的字串。** 任意 UTF-8 皆可，codec **不強制**長度或強度（由 Argon2id 拖慢暴力破解，但弱密碼仍可被猜）。請在 UI 引導使用者選足夠熵的密碼（互動解鎖建議 ≥128 bit 熵）。`.case` 與 `.casework` 的密碼**彼此獨立**。
-> - **密碼不會被自動清零。** API 收 `&str`，Rust **不會**在用完後自動把密碼位元組從記憶體抹除。對長駐的生產工具（CLI／服務），建議用 [`zeroize`](https://docs.rs/zeroize/) 之類型別包住輸入、用完即清。
+> - **明文 header 未被 AEAD 認證。** container 的 header（含 `case_id`、`bundle_hash`、manifest、task）是**明文、未簽章**，只有 payload 走過 AEAD 驗證。換句話說，任何能產檔的人都能在 header 填任意值。所以**收件端的 binding 檢查是必要的，不是選用的**（§1.6 / §5）。該信任的是「**解密後 payload** 裡的值」，以及「對 payload 重算出的 canonical `bundle_hash`」，而不是 header 上那串字。
+> - **每次封裝都產新的隨機 salt/nonce。** `pack_case` 與 `pack_submission` 內部會各自產出 fresh salt（16 B）與 nonce（24 B）。**千萬不要跨 bundle 快取或重用 key／nonce**，這份隨機性正是安全邊界所在。
+> - **passphrase 是使用者輸入的字串。** 任意 UTF-8 都收，codec **不強制**長度或強度（Argon2id 會拖慢暴力破解，但弱密碼還是猜得出來）。請在 UI 引導使用者選一個熵夠高的密碼（互動解鎖建議 ≥128 bit 熵）。`.case` 與 `.casework` 的密碼**各自獨立**。
+> - **密碼不會被自動清零。** API 收的是 `&str`，Rust **不會**在用完後幫你把密碼位元組從記憶體抹掉。長駐的生產工具（CLI／服務）建議拿 [`zeroize`](https://docs.rs/zeroize/) 之類的型別把輸入包起來，用完即清。
 
 ---
 
@@ -22,7 +22,7 @@
 
 ### 1.1 相依
 
-`fcb-rs` 尚未上 crates.io，用 Cargo git dependency：
+`fcb-rs` 還沒上 crates.io，所以用 Cargo git dependency 拉：
 
 ```toml
 # Cargo.toml
@@ -33,7 +33,7 @@ ciborium = "0.2"   # 操作 CBOR Value 時需要
 
 ### 1.2 不需密碼先看 header（peek）
 
-`peek_header` 只讀明文 header，**不需 passphrase**——適合在解鎖前先顯示是哪個 case、哪個證物版本、有哪些 stream：
+`peek_header` 只讀明文 header，**不需 passphrase**。很適合在解鎖前先告訴使用者這是哪個 case、哪個證物版本、有哪些 stream：
 
 ```rust
 use fcb::container::{peek_header, BundleKind};
@@ -72,7 +72,7 @@ for s in &streams {
 
 ### 1.4 產出 `.case`（`pack_case`）
 
-`case::pack_case` 是 `.case` 的權威產出 helper：自動以 canonical 序列化算 `bundle_hash`、組 `{streams, task?}` meta、產生隨機 salt/nonce、用預設 Argon2id cost 封裝。
+`case::pack_case` 是產 `.case` 的權威 helper，幾件事它都幫你包好了：用 canonical 序列化算出 `bundle_hash`、組好 `{streams, task?}` meta、產生隨機 salt/nonce，再以預設 Argon2id cost 封裝。
 
 ```rust
 use ciborium::value::Value;
@@ -103,7 +103,7 @@ let input = CaseInput { case_id: "demo-2026-01".into(), manifest, task: Some(tas
 let case_bytes = pack_case(&input, "passphrase")?;   // 寫成 .case 檔
 ```
 
-> stream 記錄要符合對應 type 的 schema（syslog / netflow / json 見 data-model §3）。`pack_case` 不驗證記錄形狀——schema 由生產端負責。
+> stream 記錄得符合對應 type 的 schema（syslog / netflow / json 見 data-model §3）。`pack_case` 不會檢查記錄形狀，schema 是生產端自己的責任。
 
 ### 1.5 產出 / 開封 `.casework`（`Submission`）
 
@@ -129,7 +129,7 @@ assert_eq!(back, work);
 
 ### 1.6 驗 binding（題目 ↔ 作答）
 
-收件平台**必須**確認學生作答對應的是同一個 case 與同一份證物版本（header 未認證，這步是安全關鍵，見上方「安全須知」）：
+收件平台**必須**確認學生作答對應的就是同一個 case、同一份證物版本。因為 header 沒被認證，這一步是安全關鍵，前面「安全須知」也提過：
 
 ```rust
 use fcb::binding::{verify_binding, BindingCheck};
@@ -152,7 +152,7 @@ wasm-pack build crates/fcb-wasm --target web       # 瀏覽器 ESM
 # 或 --target nodejs / --target bundler
 ```
 
-產出在 `crates/fcb-wasm/pkg/`，含 `.wasm`、JS glue、`.d.ts`。
+產出落在 `crates/fcb-wasm/pkg/`，裡面有 `.wasm`、JS glue 跟 `.d.ts`。
 
 ### 2.2 bridge 函式
 
@@ -170,7 +170,7 @@ wasm-pack build crates/fcb-wasm --target web       # 瀏覽器 ESM
 
 ### 2.3 薄 adapter（對齊 bridge 風格）
 
-把 bridge 的「丟出帶 `kind` 的 JS error」收斂成好處理的形狀：
+bridge 失敗時會丟出帶 `kind` 的 JS error，這裡把它收斂成比較好處理的形狀：
 
 ```js
 import init, * as fcb from "../crates/fcb-wasm/pkg/fcb_wasm.js";
@@ -191,7 +191,7 @@ export function peek(bytes) {
 }
 ```
 
-依 error kind 分流成可給使用者的訊息（注意：`wrong-passphrase` 要重輸密碼，`corrupt` 要拒收，兩者**不可混為一談**）：
+接著照 error kind 分流出能直接給使用者看的訊息。這裡要小心：`wrong-passphrase` 是請使用者重輸密碼，`corrupt` 是直接拒收，兩者**不能混為一談**：
 
 ```js
 export function openCaseUx(bytes, passphrase) {
@@ -214,35 +214,35 @@ export function openCaseUx(bytes, passphrase) {
 
 ## 3. Error kind 處理
 
-codec 的 `FcbError` 有五種變體；bridge 以穩定字串（`error_kind`）回報，JS 端據此分流：
+codec 的 `FcbError` 共有五種變體。bridge 會用穩定字串（`error_kind`）回報，JS 端再照這個字串分流：
 
 | `FcbError` | bridge kind | 意義 / 處理 |
 | ---------- | ----------- | ----------- |
-| `BadMagic` | `bad-magic` | 不是 FCB 檔（magic 不符）。當作「選錯檔」處理。 |
-| `UnsupportedVersion { … }` | `unsupported-version` | bundle 要求的 reader 版本比目前高。提示升級。 |
-| `Malformed(_)` | `malformed` | 結構壞了 / 不該出現的內容（如把 `.case` 當 `.casework` 開）。退件。 |
-| `WrongPassphrase` | `wrong-passphrase` | 密碼錯（由 key-check value 區分，**先於**解密判定）。**請使用者重輸入密碼**。 |
-| `Corrupt` | `corrupt` | 密碼對、但 AEAD 驗證失敗 → 內容被竄改或毀損。**拒收該檔**，不要當密碼錯。 |
+| `BadMagic` | `bad-magic` | 根本不是 FCB 檔（magic 不符）。當成「選錯檔」處理。 |
+| `UnsupportedVersion { … }` | `unsupported-version` | bundle 要求的 reader 版本比目前手上的高。提示升級。 |
+| `Malformed(_)` | `malformed` | 結構壞了，或出現了不該有的內容（例如把 `.case` 當 `.casework` 開）。退件。 |
+| `WrongPassphrase` | `wrong-passphrase` | 密碼錯（靠 key-check value 區分，**先於**解密就判得出來）。**請使用者重新輸入密碼**。 |
+| `Corrupt` | `corrupt` | 密碼對，但 AEAD 驗證沒過，代表內容被竄改或毀損。**拒收這個檔**，別當成密碼錯。 |
 
-關鍵在於 **`wrong-passphrase` 與 `corrupt` 是兩件事**：前者請使用者重輸密碼，後者代表檔案不可信。codec 用 plaintext header 裡的 key-check value 把兩者分開（細節見 [`fcb-wire-format.md`](./fcb-wire-format.md) §4）。
+重點是要記住 **`wrong-passphrase` 跟 `corrupt` 是兩回事**。前者請使用者重輸密碼就好，後者則代表這個檔案已經不可信。codec 靠 plaintext header 裡的 key-check value 把這兩者分開（細節見 [`fcb-wire-format.md`](./fcb-wire-format.md) §4）。
 
 ---
 
 ## 4. Golden-vector 契約
 
-`crates/fcb/tests/vectors.rs` 內的 **frozen 向量**是跨實作相容性的權威基準。用固定 salt/nonce 建出、逐位元釘住：
+`crates/fcb/tests/vectors.rs` 裡的 **frozen 向量**是跨實作相容性的權威基準。它們用固定 salt/nonce 建出，逐位元釘死：
 
 | 向量 | 釘住什麼 |
 | ---- | -------- |
 | `FROZEN_CASE_HEX` | 一個 `.case`（2 streams + task）的完整 sealed bytes。 |
-| `FROZEN_WORK_HEX` | 一個 `.casework`（test-local 3 欄 `WorkPayload`，歷史向量）。 |
+| `FROZEN_WORK_HEX` | 一個 `.casework`（test-local 3 欄 `WorkPayload`，屬於歷史向量）。 |
 | `FROZEN_SUBMISSION_HEX` | 真實 7 欄 `Submission` 的 `.casework` sealed bytes。 |
-| `FROZEN_CASE_BUNDLE_HASH` | 固定 streams 的 canonical `bundle_hash`。 |
-| `FROZEN_CASE_PAYLOAD_HEX` | 固定 streams 的 canonical 明文 payload bytes。 |
+| `FROZEN_CASE_BUNDLE_HASH` | 固定那組 streams 的 canonical `bundle_hash`。 |
+| `FROZEN_CASE_PAYLOAD_HEX` | 固定那組 streams 的 canonical 明文 payload bytes。 |
 
-**用 Rust 消費**時，只要相依 `fcb` crate、走 `bundle`/`case`/`submission` 的公開 API，就自動與這些向量一致——不必自己對齊位元組。
+**用 Rust 消費**的話最省事：只要相依 `fcb` crate、走 `bundle`/`case`/`submission` 的公開 API，產出就自動和這些向量一致，不必自己去對齊位元組。
 
-**用非 Rust 重寫 codec**時，把上述 hex `hex::decode` 後，用你的實作解密/解碼並**逐位元比對**，即為相容性檢查（最關鍵的互通陷阱見 [`fcb-reference.md`](./fcb-reference.md)：ciborium 把 `Vec<u8>` 編成 CBOR array-of-uint，不是 byte string）。
+**用非 Rust 重寫 codec**時，先把上述 hex 拿去 `hex::decode`，再用你的實作解密、解碼，然後**逐位元比對**，這就是相容性檢查。最容易踩到的互通陷阱見 [`fcb-reference.md`](./fcb-reference.md)：ciborium 會把 `Vec<u8>` 編成 CBOR array-of-uint，而不是 byte string。
 
 ---
 
@@ -261,11 +261,11 @@ pack_case(streams, task)
                                                                  → Match / *Mismatch
 ```
 
-1. **出題**：教師以 `pack_case` 把證物 streams 與**不含答案**的 task 封成 `.case`，記下其 `header.bundle_hash`（證物版本）。
-2. **作答**：學生用密碼 `openCase` 讀題與證物，產出 `Submission`（帶 `case_id` 與題目的 `bundle_hash`），`pack_submission` 封成 `.casework`。
-3. **收件**：平台 `openSubmission` 後，以 `verify_binding` 確認——用的是**解密後** `Submission` 裡的 `case_id`/`bundle_hash`，不是明文 header：
+1. **出題**：教師用 `pack_case` 把證物 streams 跟一份**不含答案**的 task 封成 `.case`，並記下它的 `header.bundle_hash`（也就是證物版本）。
+2. **作答**：學生輸入密碼，用 `openCase` 讀題、看證物，作答後產出 `Submission`（帶上 `case_id` 與題目的 `bundle_hash`），再用 `pack_submission` 封成 `.casework`。
+3. **收件**：平台 `openSubmission` 之後，用 `verify_binding` 確認。比對的依據是**解密後** `Submission` 裡的 `case_id` 跟 `bundle_hash`，不是明文 header：
    - `Match`：同 case、同證物版本，收件。
-   - `CaseMismatch`：不同題目（檔案來自別處），退件。
-   - `EvidenceVersionMismatch`：同題目但證物被重發過，學生作答的是**舊版**證物——退件並給明確理由（別靜默當 Match）。
+   - `CaseMismatch`：根本不是同一題（檔案來自別處），退件。
+   - `EvidenceVersionMismatch`：題目對得上，但證物被重發過，學生作答的是**舊版**證物。這時要退件並講清楚理由，別靜默地當成 Match。
 
-各步驟的欄位語意、答案安全不變量（task 不含 answer/rubric/solution）與 binding 三態，詳見 [`fcb-data-model.md`](./fcb-data-model.md)。
+每一步的欄位語意、答案安全不變量（task 不含 answer/rubric/solution）以及 binding 三態，都詳見 [`fcb-data-model.md`](./fcb-data-model.md)。

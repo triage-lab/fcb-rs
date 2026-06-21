@@ -241,7 +241,7 @@ a8                                   header = CBOR map(8)
 > `Option<TaskSpec>` + `#[serde(default, skip_serializing_if = "Option::is_none")]`
 > （`task.rs:47-56`），`None` 時**整個 `task` key 會被省略**；但凍結向量用的測試結構
 > `CaseMeta` 把 `task` 寫成非 Option 欄位，**永遠寫出 `task`**（`vectors.rs:31-35, 85`）。所以凍結
-> `.case` 的 meta 是 `a2`（含 `task`）；若以 `CaseMeta` 為樣板複製，會和 `task_to_meta(None)` 的輸出
+> `.case` 的 meta 是 `a2`（含 `task`）。若以 `CaseMeta` 為樣板複製，會和 `task_to_meta(None)` 的輸出
 > 不一致。讀取端兩種都容忍（`manifest_from_meta` 只讀 `streams`、`task_from_meta` 只讀 `task`）。
 
 ### ⚠️ ciborium 慣例與陷阱（互通關鍵）
@@ -345,7 +345,7 @@ open:    payload --AEAD decrypt--> zstd_frame --zstd decompress--> plaintext
 - **壓縮**：標準 zstd frame（magic `0x28 0xB5 0x2F 0xFD`，`ZSTD_MAGIC`，`compress.rs:21`）。後端是
   **純 Rust `ruzstd` 0.8**（無 C/FFI，native 與 `wasm32-unknown-unknown` 共用同一份程式碼，
   `compress.rs:6-10`）。`ruzstd` 0.8 編碼**目前只實作 `Fastest`**（與 `Uncompressed`）；更高等級尚未
-  實作、不要使用（`compress.rs:24-28`）。`Fastest` 對重複性高的 log 已有好壓縮比，且 frame 格式與
+  實作、不要使用（`compress.rs:24-28`）。`Fastest` 對重複性高的 log 已有好壓縮比。frame 格式與
   更高等級相容、未來可無縫升級，並能與 C zstd reader 互通。
 - **加密**：XChaCha20-Poly1305（`chacha20poly1305` 0.10）。key = §4 推導的 32 bytes、nonce =
   `header.aead.nonce`（24 bytes）、**無 AAD**（`seal`/`open` 只傳 `(nonce, plaintext)`，`crypto.rs:68, 77`）。
@@ -417,7 +417,7 @@ key_check = SHA256( "FCB-key-check-v1" || key )     // 32 bytes（domain 在前�
 - KCV 不符 → `WrongPassphrase`（密碼錯，`crypto.rs:89-90`）。
 - KCV 相符但 AEAD 驗證失敗 → `Corrupt`（檔案被竄改／毀損，`crypto.rs:78, 92`）。
 
-比較用 constant-time（`ct_eq`，`crypto.rs:96-105`）：長度不同立即回 `false`（長度非秘密）；
+比較用 constant-time（`ct_eq`，`crypto.rs:96-105`）：長度不同立即回 `false`（長度非秘密）。
 否則 XOR 累加、無提前跳出。**注意這是手寫累加器、非 `subtle` crate**，但對等長輸入仍是 constant-time。
 發佈 key 的 hash 不會實質幫到攻擊者，因為 Argon2id 仍是暴力門檻。
 
@@ -529,7 +529,7 @@ stream 記錄的逐欄 schema、演進／相容規則一律見 [`fcb-data-model.
 > 自組 `CasePayload { streams }` → `cbor::encode` → `BundleParams::new` → `pack_bytes` → `open_bytes`），
 > 以及 `README.md` §「給 case builder 作者的起手建議」的 `use` 匯入範例。
 
-順序要點：`salt`/`nonce` 在推 key 前就要產生；`key_check` 在加密前算好；`header` 要等
+順序要點：`salt`/`nonce` 在推 key 前就要產生，`key_check` 在加密前算好。最後 `header` 要等
 `salt`/`nonce`/`key_check`/`bundle_hash`/`meta` 都備齊後才能序列化求 `hdr_len`（`header` 不含
 `ciphertext`）。
 
