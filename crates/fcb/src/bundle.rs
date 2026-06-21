@@ -171,7 +171,13 @@ mod tests {
         // passphrase is right, but the AAD no longer matches the sealed tag, so
         // the open fails as Corrupt rather than returning tampered data.
         let params = fast_params(BundleKind::Case);
-        let mut bytes = pack_bytes(&params, b"some evidence payload", "pw").unwrap();
+        let good = pack_bytes(&params, b"some evidence payload", "pw").unwrap();
+        // Control: the untampered bundle opens cleanly. Without this, a Corrupt
+        // below could merely mean AAD binding is broken for *every* bundle; the
+        // control proves the failure is specifically due to the header byte.
+        assert!(open_bytes(&good, "pw").is_ok());
+
+        let mut bytes = good.clone();
         let needle = b"case-1";
         let pos = bytes
             .windows(needle.len())

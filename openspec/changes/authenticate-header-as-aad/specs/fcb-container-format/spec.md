@@ -4,11 +4,19 @@
 
 The plaintext header SHALL be cryptographically authenticated by binding its bytes — together with the framing prefix that precedes it (the magic, KIND, container_version, and hdr_len) — as the AEAD additional authenticated data (AAD) used to seal the payload. A reader SHALL reconstruct the identical AAD from the bytes it reads before decryption, so that any modification to a header field (including case_id, bundle_hash, KDF parameters, AEAD nonce, key_check, or the meta object carrying the stream manifest and task spec) or to the framing prefix causes AEAD verification to fail. The header SHALL remain readable without the passphrase.
 
+The AAD SHALL be exactly the contiguous on-disk bytes that precede the encrypted payload, taken verbatim as read and NOT re-serialized: the 4-byte magic, the 1-byte KIND, the 2-byte little-endian container_version, the 4-byte little-endian hdr_len, and the hdr_len-byte CBOR header — that is, the byte range from offset 0 up to (but excluding) the first ciphertext byte, whose length equals `11 + hdr_len`. A reader SHALL authenticate these literal prefix bytes rather than a re-encoding of the parsed header, so a bundle whose header is non-canonical CBOR still authenticates against its own on-disk bytes.
+
 #### Scenario: Header authenticated without breaking passphrase-free read
 
 - **WHEN** a reader opens a bundle before supplying a passphrase
 - **THEN** it SHALL still read the plaintext header fields
 - **AND** when the passphrase is later supplied, decryption SHALL verify the header bytes as AAD
+
+##### Example: AAD byte range for a bundle whose hdr_len is 476
+
+- **GIVEN** a bundle whose hdr_len field holds 476 (little-endian `dc 01 00 00`)
+- **WHEN** the reader binds the AAD
+- **THEN** the AAD is the byte range `[0, 487)` — magic `[0,4)`, KIND `[4,5)`, container_version `[5,7)`, hdr_len `[7,11)`, header CBOR `[11,487)` — and the ciphertext begins at offset 487 (`11 + 476`)
 
 #### Scenario: Header field tamper detected
 
