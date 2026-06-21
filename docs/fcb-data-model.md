@@ -34,9 +34,10 @@ container 佈局與 crypto 重點（§8–§12），但兩者數值必須一致�
 明文 header 含 salt／nonce／cost 是刻意的：在還沒有 key 之前，reader 必須先讀到這些才能推導 key
 （`crates/fcb/src/container.rs:12-13`）。
 
-> **安全注意：** 明文 header **未被 AEAD 認證**（AEAD 只認證 payload，無 AAD，見 §11）。`case_id` /
-> `bundle_hash` / `meta` 可被竄改而不觸發解密失敗；要防範須由生產端透過 `bundle_hash` 涵蓋範圍另外保證
-> （見 §6、§13）。
+> **安全注意：** 明文 header 雖可在解鎖前讀，但**已被 AEAD 認證**：封裝時整段明文 container 前綴（含完整
+> header）綁進 AEAD 的 AAD（見 §11）。竄改 `case_id` / `bundle_hash` / `meta` 任一欄位都會讓 `open` 失敗為
+> `Corrupt`。此外 `.case` 開封（`open_case`）還會用解密後的 canonical payload 重算 `bundle_hash` 並比對，
+> 驗證內容定址（見 §7）。
 
 ---
 
@@ -415,8 +416,9 @@ magic(4) | KIND(u8=1B) | container_version(u16 LE=2B) | hdr_len(u32 LE=4B)
 - 前 4 bytes 非 magic → `FcbError::BadMagic`（**不**嘗試解密）。
 - 缺 KIND → `Malformed("missing KIND")`；未知 KIND byte → `Malformed("unknown KIND byte {other}")`
   （placeholder 名 `{other}`，逐字對齊 `container.rs:52`）。
-- `header.min_reader > READER_VERSION(=1)` → `UnsupportedVersion { min_reader, supported }`（優雅拒絕，
-  不吐部分資料）。
+- `header.min_reader > READER_VERSION(=2)` → `UnsupportedVersion { min_reader, supported }`（優雅拒絕，
+  不吐部分資料）。`READER_VERSION` 從 `1` 升到 `2`，因明文 header 改綁進 AEAD AAD（§11）：pre-AAD 的 v1
+  reader 開不了新 bundle，故新 bundle 寫 `min_reader = 2` 讓舊 reader 優雅拒絕。
 - `hdr_len` 越界 → `Malformed("header length out of bounds")`；header CBOR 壞 →
   `Malformed("bad header CBOR: ...")`。
 - `container_version` 目前**讀但不分派**（`peek_header` 直接 `let _container_version` 丟棄；
@@ -434,8 +436,8 @@ magic(4) | KIND(u8=1B) | container_version(u16 LE=2B) | hdr_len(u32 LE=4B)
 
 | # | 欄位 | Rust 型別 | CBOR key（text） | 寫入值（生產端） | sourceRef |
 |---|------|-----------|------------------|------------------|-----------|
-| 1 | `header_schema_ver` | `u16` | `header_schema_ver` | `1` | container.rs:85-86；bundle.rs:71 |
-| 2 | `min_reader` | `u16` | `min_reader` | `1` | container.rs:87-88；bundle.rs:72 |
+| 1 | `header_schema_ver` | `u16` | `header_schema_ver` | `1` | container.rs:85-86；bundle.rs:75 |
+| 2 | `min_reader` | `u16` | `min_reader` | `2`（AAD 格式） | container.rs:87-88；bundle.rs:78 |
 | 3 | `case_id` | `String` | `case_id` | 由呼叫端帶入 | container.rs:89-90 |
 | 4 | `bundle_hash` | `String` | `bundle_hash` | 由呼叫端帶入（§6） | container.rs:91-92 |
 | 5 | `kdf` | `KdfParams` | `kdf` | 見下 | container.rs:93 |
@@ -482,7 +484,7 @@ magic(4) | KIND(u8=1B) | container_version(u16 LE=2B) | hdr_len(u32 LE=4B)
 
    | 整數值 | 編碼 | 範例 |
    |---|---|---|
-   | 0–23 | 單 byte `0x00 + n`（inline） | `1`（`header_schema_ver`／`min_reader`）→ `01`；`7`（severity Debug）→ `07` |
+   | 0–23 | 單 byte `0x00 + n`（inline） | `1`（`header_schema_ver`）→ `01`；`2`（`min_reader`，AAD 格式）→ `02`；`7`（severity Debug）→ `07` |
    | 24–255 | `0x18` + 1 byte | `32`（golden vector 測試 cost `m_cost`）→ `18 20`（`vectors.rs:52`）；`0x2f`（key_check 內某 byte）→ `18 2f` |
    | 256–65535 | `0x19` + 2 byte（**big-endian**） | **`19456`（production 預設 `m_cost`，`bundle.rs:16`）→ `19 4C 00`**；`65535` → `19 ff ff` |
    | 65536–2³²−1 | `0x1a` + 4 byte（big-endian） | `100000` → `1a 00 01 86 a0` |
@@ -625,10 +627,23 @@ key（作品隔離，`binding.rs:90-94`）。實體 IndexedDB store 屬消費端
 `EvidenceVersionMismatch` 提示。
 
 > ℹ️ canonical 定義「`bundle_hash` = 明文 payload bytes 的 hash」已由 `fcb::case::case_bundle_hash` 落實、
-> 由 `pack_case` 自動帶入 header（§13）。低階 `compute_bundle_hash` 仍接受任意 bytes，`binding.rs`／
-> `submission.rs` 不會重算或驗證它對得上 payload（codec 層不強制涵蓋範圍）；golden vector 的 header 仍用
-> 假值 `"sha256:deadbeef"`（`vectors.rs`）。canonical hash 的凍結見 §14 的「已關閉」註與
-> `case_canonical_bundle_hash_is_frozen`。
+> 由 `pack_case` 自動帶入 header（§13）。低階 `compute_bundle_hash` 仍接受任意 bytes、不自行驗證涵蓋範圍；
+> golden vector 的 header 仍用假值 `"sha256:deadbeef"`（`vectors.rs`）。canonical hash 的凍結見 §14 的
+> 「已關閉」註與 `case_canonical_bundle_hash_is_frozen`。
+
+> ✅ **`.case` 開封會驗證內容定址（`open_case`，fcb-wasm）。** `open_case` 對解密後的 canonical payload
+> **重算 `bundle_hash` 並和 header 值比對**，不符即 `Corrupt`（`fcb-wasm/src/lib.rs`）。header 現已被 AEAD
+> AAD 認證、保證 `bundle_hash` 欄位未被竄改，但 AAD 不保證它**等於** payload 的 hash，故 `.case` 路徑額外
+> 重算。
+>
+> ⚠️ **`.case` 與 `.casework` 在這點不同。** 上述重算**只**發生在 `.case`——因為 `.case` 的 `bundle_hash`
+> 本就是其 canonical payload 的雜湊。**`.casework`（submission）不重算**：submission 的 header `bundle_hash`
+> 是**綁回其 case 的參照**（記錄作答時所對的證物版本），不是 submission payload 的雜湊，所以
+> `open_submission` 不對它做內容定址驗證。
+
+> ⚠️ **binding 對 re-pack 敏感（by-design）。** 因 `bundle_hash` 是內容定址，case payload **任何**重新封裝
+> （即使只改一個 byte）都會得到新雜湊，使既有 submission 的 binding 變成 `EvidenceVersionMismatch`。要避免
+> 學生作品被誤判為舊版，請在**發題後凍結** case payload、不要重 pack。
 
 ---
 
@@ -657,20 +672,25 @@ case builder 設計守則：把答案／rubric 放在**不會進 `.case`** 的�
 `crypto.rs`、`bundle.rs`）。本節是讓本檔自洽的摘要；完整論述見 [`fcb-wire-format.md`](./fcb-wire-format.md)。
 
 ```text
-pack：   plaintext --(zstd Fastest)--> zstd frame --(XChaCha20-Poly1305, no AAD)--> ciphertext   // compress.rs:42-45
-open：   ciphertext --(AEAD open，先 KCV 檢查)--> zstd frame --(zstd decompress)--> plaintext     // compress.rs:48-56
+pack：   plaintext --(zstd Fastest)--> zstd frame --(XChaCha20-Poly1305, AAD=明文前綴)--> ciphertext   // compress.rs:45-53
+open：   ciphertext --(AEAD open，先 KCV 檢查、AAD 須相符)--> zstd frame --(zstd decompress)--> plaintext  // compress.rs:57-66
 ```
+
+AAD = 明文 container 前綴（magic、KIND、container_version、hdr_len、完整 header CBOR）；pack 對
+`encode_prefix(...)` 封裝、open 取 payload 之前的位元組為 AAD（§11）。AAD 不符即視為竄改、失敗為 `Corrupt`。
 
 **順序不變量：先壓縮、後加密**（`compress.rs:42-56`；測試 `order_is_compress_then_encrypt` 證實解密後
 得到的 inner 前 4 bytes == `ZSTD_MAGIC`、outer 前 4 bytes != `ZSTD_MAGIC`）。**禁止** encrypt-then-compress。
 
-`pack_bytes`（`bundle.rs:57-84`）逐步：① 16-byte 隨機 salt → ② 24-byte 隨機 nonce → ③ 組 `KdfParams`
+`pack_bytes`（`bundle.rs:62-96`）逐步：① 16-byte 隨機 salt → ② 24-byte 隨機 nonce → ③ 組 `KdfParams`
 （algo `"argon2id"` + salt + cost）→ ④ `derive_key` 推 32-byte key → ⑤ 算 `key_check`（KCV，加密前算）
-→ ⑥ `pack_payload`（compress-then-encrypt）→ ⑦ 組 `Header` → ⑧ `write_container`。salt/nonce 每次
-`pack_bytes` 都用 `getrandom` 重新產生。
+→ ⑥ 組 `Header`（`min_reader = 2`）並以 `encode_prefix(KIND, header)` 序列化出明文前綴 → ⑦ `pack_payload`
+（compress-then-encrypt，**以該前綴為 AAD**）→ ⑧ 輸出 `前綴 ‖ ciphertext`。step ⑥ 必須先於 ⑦，因為前綴是
+seal 的 AAD。salt/nonce 每次 `pack_bytes` 都用 `getrandom` 重新產生。
 
-`open_bytes`（`bundle.rs:88-98`）：`read_container` → `derive_key(passphrase, header.kdf)` →
-`unpack_payload(key, header.key_check, header.aead.nonce, payload)`。
+`open_bytes`（`bundle.rs:101-117`）：`read_container` → 取 payload 之前的位元組為 `aad` →
+`derive_key(passphrase, header.kdf)` →
+`unpack_payload(key, header.key_check, header.aead.nonce, payload, aad)`。AAD 不符即 `Corrupt`。
 
 ---
 
@@ -686,7 +706,7 @@ open：   ciphertext --(AEAD open，先 KCV 檢查)--> zstd frame --(zstd decomp
 | algo 驗證 | `derive_key` **只**驗 `kdf.algo == "argon2id"`，否則 `Malformed("unsupported KDF: {algo}")` | crypto.rs:29-31 |
 | KCV 公式 | `key_check = SHA256(KCV_DOMAIN ‖ key)` = `SHA256(b"FCB-key-check-v1" ‖ key)`，32 bytes（domain 在前、key 在後） | crypto.rs:25, 43-48 |
 | KCV 用途 | 開封時先 `ct_eq(KCV(key), header.key_check)` 區分錯密碼 vs 竄改 | crypto.rs:83-93 |
-| AEAD | XChaCha20-Poly1305，nonce **24 bytes**、**無 AAD** | crypto.rs:23, 65-79 |
+| AEAD | XChaCha20-Poly1305，nonce **24 bytes**、**AAD = 明文 container 前綴**（magic/KIND/version/hdr_len/header CBOR） | crypto.rs:23, 71-86 |
 | AEAD algo 驗證 | `aead.algo`（`"xchacha20poly1305"`）寫入 header 但開封時**從不驗證**，`seal`/`open` 完全忽略 | bundle.rs:77；crypto.rs（無讀取） |
 | 壓縮 | ruzstd 0.8（純 Rust，native == wasm），編碼僅 `CompressionLevel::Fastest`；標準 zstd frame magic `28 B5 2F FD` | compress.rs:6-10, 21, 29-31 |
 
@@ -709,16 +729,25 @@ open：   ciphertext --(AEAD open，先 KCV 檢查)--> zstd frame --(zstd decomp
 
 ## 11. 安全特性（明確界線）
 
-- **AEAD 只認證 payload、無 AAD**：`seal`／`open` 只傳 `(nonce, payload)`（`crypto.rs:68, 77`）。因此
-  **明文 header（含 `case_id`／`bundle_hash`／`meta`／manifest／task）未被 AEAD 認證**——可被竄改而
-  不觸發解密失敗。
-- **明文 header 是刻意的**：salt／cost／nonce 必須在還沒 key 之前就讀到（`container.rs:12-13`）。
-- **`bundle_hash` 涵蓋範圍由生產端負責、codec 不驗證**：`compute_bundle_hash` 對任意 bytes 算 hash，
-  `binding.rs`／`submission.rs` 不重算、不比對它與 payload 的關係（§7）。若要讓 header 的 `bundle_hash`
-  能反映證物內容，須由 case builder 自律地用「明文 payload bytes」算（§7 建議），並理解這層保證在 codec
-  外、非 AEAD 強制。
-- **錯密碼與竄改可區分且皆非靜默**：`WrongPassphrase`（KCV 不符）vs `Corrupt`（KCV 符但 AEAD/zstd 失敗），
-  兩者都**不**吐部分／損壞資料（§10、§12）。
+- **AEAD 同時認證 payload 與整段明文 header／前綴**：`seal`／`open` 都收 `aad: &[u8]`，封裝時把明文
+  container 前綴（magic、KIND、container_version、hdr_len、完整 header CBOR）綁進 AEAD 的 AAD
+  （`crypto.rs:71, 81`、`bundle.rs:91-92`、`bundle.rs:106-107`）。因此竄改 **header 任一欄位**（含
+  `case_id`／`bundle_hash`／`meta`／manifest／task）——只要 passphrase 正確、header 仍能解析——`open`
+  都會失敗為 **`Corrupt`**（測試 `header_tamper_is_corrupt`）。結構性檢查仍先行：magic 壞 → `BadMagic`、
+  未知 KIND → `Malformed`。
+- **明文 header 是刻意的（但仍被認證）**：salt／cost／nonce 必須在還沒 key 之前就讀到
+  （`container.rs:12-13`），所以 header 是明文、可 `peek`；不過整段前綴綁進 AAD，明文 ≠ 未認證。
+- **`.case` 開封驗證內容定址、`.casework` 不驗**：`open_case`（fcb-wasm）對解密後的 canonical payload
+  重算 `bundle_hash` 並比對，不符即 `Corrupt`（AAD 只保證欄位未被竄改、不保證等於 payload hash，故額外
+  重算）。`.casework` 的 header `bundle_hash` 是綁回 case 的參照、非 submission payload 的雜湊，
+  `open_submission` 不重算（§7）。
+- **`bundle_hash` 是明文 payload 的確認 oracle（低熵情境，by-design）**：`bundle_hash` 是**明文 payload 的
+  SHA-256**、存在不需 passphrase 即可讀的明文 header 裡。對**低熵／可猜的 payload**，能猜中 payload 的人
+  可藉這個雜湊**確認**猜測；高熵／大型 payload 不受影響。這是內容定址綁定的固有取捨，非漏洞。
+- **binding 對 re-pack 敏感（by-design）**：因 `bundle_hash` 內容定址，case payload 任何重新封裝都得到新
+  雜湊，使既有 submission 的 binding 變成 `EvidenceVersionMismatch`——發題後請凍結 payload（§7）。
+- **錯密碼與竄改可區分且皆非靜默**：`WrongPassphrase`（KCV 不符）vs `Corrupt`（KCV 符但 AEAD/AAD/zstd
+  失敗），兩者都**不**吐部分／損壞資料（§10、§12）。
 - **答案安全**靠 typed model 結構性保證（§8），非靠加密——學生本來就能解密整包。
 
 ---
@@ -791,14 +820,18 @@ open：   ciphertext --(AEAD open，先 KCV 檢查)--> zstd frame --(zstd decomp
    （另見下方 Non-Goals）。
 3. **payload 多餘 stream 的行為無測試斷言。** payload 含 manifest 未列的 stream 會被**靜默忽略**（§2 不變量，
    迭代由 manifest 驅動，`evidence.rs:78-92`），但此行為**沒有專屬測試**——是否刻意如此**未證實**。
+4. **`manifest.records` 宣告筆數僅供參考（advisory）。** manifest 每條 stream 的 `records` 計數，pack 與
+   open **都不會**拿它和實際記錄數核對；消費端應以**開封後 payload** 解出的記錄為準推導筆數，不要信 peek
+   階段宣告的 `records`。
 
 **Non-Goals（本檔／本層不負責）：**
 
 - **不**定義 `notes`／`report`／`activity` 的 schema——那是 browser workbench 的範疇（§6 不透明）。
 - **不**定義 plugin parser registry 的執行機制——`is_builtin = false` 的 fallback 是消費端概念，本 crate
   未實作。
-- 低階 `compute_bundle_hash` **不**驗證涵蓋範圍（canonical 定義已由 `case::case_bundle_hash` 落實，但
-  primitive 本身不強制，§7／§11）；亦**不**靠 AEAD 保護明文 header。
+- 低階 `compute_bundle_hash` 這個 primitive 本身**不**驗證涵蓋範圍（canonical 定義已由 `case::case_bundle_hash`
+  落實、`.case` 開封由 `open_case` 重算驗證，§7／§11）。**明文 header／前綴現已被 AEAD AAD 認證**，竄改
+  header 會失敗為 `Corrupt`（§11）——這已**不再**是 Non-Goal。
 - 實體 IndexedDB／儲存層**不**在 binding 範疇（`work_key` 只給 key 字串）。
 
 剩餘缺口建議「回頭在 `fcb` crate 定 schema」，而非只在消費端自幹。這樣 browser 端、case builder、

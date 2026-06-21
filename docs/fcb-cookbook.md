@@ -2,7 +2,7 @@
 
 任務導向的速查。每則 recipe 只給你兩樣東西：**目標**，以及**會用到哪些呼叫**。想看完整脈絡就翻 [`fcb-integration-guide.md`](./fcb-integration-guide.md)，想要逐位元的權威說法則查 [`fcb-reference.md`](./fcb-reference.md)、[`fcb-data-model.md`](./fcb-data-model.md)、[`fcb-wire-format.md`](./fcb-wire-format.md)。
 
-> 動手前先記住一件事（整合指南「安全須知」講得更細）：明文 header 沒經過 AEAD 認證，所以**收件端一定要驗 binding**，而且能信的只有**解密後 payload** 裡的值。
+> 動手前先記住一件事（整合指南「安全須知」講得更細）：明文 header 現在**已被 AEAD AAD 認證**，竄改 header 任一欄位（含 `bundle_hash`）開封都會失敗為 `Corrupt`，`.case` 開封還會重算 `bundle_hash` 驗內容定址。即便如此，**收件端仍應驗 binding**——`open` 只能證明「這份檔案沒被動過」，不能證明「這份 submission 對得上你這一題」，後者要靠 `verify_binding`（Recipe 1–2）。
 
 ---
 
@@ -106,3 +106,23 @@ let task = task_from_meta(&header.meta)?;            // Option<TaskSpec>
 ```
 
 WASM/JS 這邊呼叫 `peekHeader(bytes)` 就行。涉及：`container::peek_header`、`evidence::manifest_from_meta`、`task::task_from_meta`。延伸：整合指南 §1.2、§2.2。
+
+---
+
+## Recipe 7：小心 `bundle_hash` 的低熵確認 oracle
+
+**目標**：理解 `bundle_hash` 這個明文欄位在什麼情境下會洩漏資訊，避免不小心把可猜的內容攤出去。
+
+`bundle_hash` 是 `.case` **明文 payload 的 SHA-256**，而且就放在不需密碼就能讀的明文 header 裡（`peekHeader` 也讀得到）。對**高熵或大型**的證物 payload，這沒問題——猜不到原文就算不出雜湊。但對**低熵、可枚舉**的 payload（例如內容只有少數幾種可能），它等於一個**確認 oracle**：能猜中 payload 的人可以拿自己算的雜湊和 header 的 `bundle_hash` 對，藉此**確認**猜測。出題時若 payload 本身敏感且空間很小，要意識到這層暴露。
+
+涉及：`container::peek_header`、`binding::compute_bundle_hash`。延伸：[`fcb-data-model.md`](./fcb-data-model.md) §7／§11、[`fcb-wire-format.md`](./fcb-wire-format.md) §9（設計取捨）。
+
+---
+
+## Recipe 8：發題後凍結 payload——別讓 re-pack 弄壞既有 binding
+
+**目標**：避免改完證物重發後，學生已交的作品全被誤判成「舊版證物」。
+
+`bundle_hash` 是內容定址，所以 case payload **任何**重新封裝——哪怕只改一個 byte、甚至只是重跑一次 pack——都會得到不同的 `bundle_hash`。學生作品帶的是舊雜湊，`verify_binding` 就會回 `EvidenceVersionMismatch`（Recipe 2）。實務守則很簡單：**題目發出去後就凍結那份 case payload**，真的要改證物再走「重發＝新版本」流程，並準備好處理舊版作品。
+
+涉及：`binding::verify_binding` 的 `EvidenceVersionMismatch`、`case::case_bundle_hash`。延伸：[`fcb-data-model.md`](./fcb-data-model.md) §7、[`fcb-wire-format.md`](./fcb-wire-format.md) §9（設計取捨）。

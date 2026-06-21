@@ -80,7 +80,7 @@
 |------|------|--------|------|
 | `MAGIC` | `[u8; 4]` | `[0x89, b'F', b'C', b'B']` = `89 46 43 42` | container.rs:22 |
 | `CONTAINER_VERSION` | `u16` | `1` | container.rs:25 |
-| `READER_VERSION` | `u16` | `1` | container.rs:29 |
+| `READER_VERSION` | `u16` | `2` | container.rs:32 |
 | `BundleKind::Case` → byte | `u8` | `1` | container.rs:42-43 |
 | `BundleKind::Work` → byte | `u8` | `2` | container.rs:44 |
 
@@ -115,7 +115,7 @@
 | salt / nonce / key_check **長度** | crypto 層（nonce 須 ==24，`nonce_from`） | container.rs（僅 `Vec<u8>`）；crypto.rs:54-62 |
 | `kdf.algo` 值（須 `argon2id`） | crypto 層 `derive_key` | crypto.rs:29-31 |
 | `aead.algo` 值 | **無人驗證**（描述性） | bundle.rs:77（寫入）；crypto 全層不讀 |
-| `bundle_hash` 內容 | 生產端 | binding.rs:14-22（不驗證涵蓋範圍） |
+| `bundle_hash` 內容 | 生產端（容器層不驗）；但 `.case` 開檔在更上層重算驗證 | binding.rs:14-22（容器層不驗涵蓋範圍）；`.case` 重算見 wasm/src/lib.rs:164-166 |
 | `header_schema_ver` | **不檢查**（只檢 `min_reader`） | container.rs:169（僅 `min_reader`） |
 | `container_version` 值 | **不分派**（v1 是目前唯一已知佈局；即使 ≠1 也照 v1 解、不報錯） | container.rs:205-206 |
 
@@ -132,7 +132,7 @@
 | # | 欄位 | Rust 型別 | CBOR key（text） | 寫入值（`bundle.rs`） | 出處 |
 |---|------|-----------|------------------|----------------------|------|
 | 1 | `header_schema_ver` | `u16` | `"header_schema_ver"` | `1` | container.rs:85-86；bundle.rs:71 |
-| 2 | `min_reader` | `u16` | `"min_reader"` | `1` | container.rs:87-88；bundle.rs:72 |
+| 2 | `min_reader` | `u16` | `"min_reader"` | `2` | container.rs:90-91；bundle.rs:78 |
 | 3 | `case_id` | `String` | `"case_id"` | 由 `BundleParams` 帶入 | container.rs:89-90 |
 | 4 | `bundle_hash` | `String` | `"bundle_hash"` | 由 `BundleParams` 帶入（格式 `"sha256:<hex>"`，見 §6.5） | container.rs:91-92 |
 | 5 | `kdf` | `KdfParams` | `"kdf"` | 見 §2.2 | container.rs:93 |
@@ -183,7 +183,7 @@ Derives：`Debug, Clone, PartialEq, Eq, Serialize, Deserialize`（container.rs:7
 
 | 值 n | 起頭編碼 | 範例 |
 |------|----------|------|
-| 0–23 | 單 byte `0x00 + n` | `1`（`min_reader`）→ `0x01`；`23` → `0x17` |
+| 0–23 | 單 byte `0x00 + n` | `2`（`min_reader`）→ `0x02`；`23` → `0x17` |
 | 24–255 | `0x18` + 1-byte（big-endian） | `m_cost=32` → `18 20`（golden，vectors.rs:52）；`24` → `18 18`；`255` → `18 ff` |
 | 256–65535 | `0x19` + 2-byte（big-endian） | **`m_cost=19456`（生產預設，bundle.rs:16）→ `19 4c 00`**；`256` → `19 01 00` |
 | 65536–2³²−1 | `0x1a` + 4-byte（big-endian） | `65536` → `1a 00 01 00 00` |
@@ -399,18 +399,19 @@ key_check = SHA256( KCV_DOMAIN || key )
 - **domain prefix 先 hash、key 後 hash**（`h.update(KCV_DOMAIN)` then `h.update(key)`）。出處：crypto.rs:44-47。
 - 輸出 32 bytes（SHA-256），明文存於 `Header.key_check: Vec<u8>`。出處：crypto.rs:43；container.rs:98。
 
-### 4.3 AEAD：XChaCha20-Poly1305（**無 AAD**）
+### 4.3 AEAD：XChaCha20-Poly1305（**header 綁為 AAD**）
 
 | 函式 | 簽名重點 | nonce | AAD | error | 出處 |
 |------|----------|:-----:|:---:|-------|------|
-| `cipher_for` | `XChaCha20Poly1305::new(Key::from_slice(key))` | — | — | — | crypto.rs:50-52 |
-| `nonce_from` | 拒絕 `len != 24` | 24 B | — | `Malformed("nonce must be 24 bytes, got N")` | crypto.rs:54-62 |
-| `seal` | `(&[u8;32], nonce, plaintext) -> Vec<u8>`；`.encrypt(nonce, plaintext)`（2-arg） | 24 B | **none** | `Malformed("AEAD encryption failure")` | crypto.rs:65-70 |
-| `open` | `.decrypt(nonce, ciphertext)`（2-arg） | 24 B | **none** | `Corrupt`（任何失敗） | crypto.rs:74-79 |
-| `open_payload` | `(key, expected_kcv, nonce, ciphertext)`；先 KCV 比對再 `open` | 24 B | none | WrongPassphrase / Corrupt（見 §4.4） | crypto.rs:83-93 |
+| `cipher_for` | `XChaCha20Poly1305::new(Key::from_slice(key))` | — | — | — | crypto.rs:53-55 |
+| `nonce_from` | 拒絕 `len != 24` | 24 B | — | `Malformed("nonce must be 24 bytes, got N")` | crypto.rs:57-65 |
+| `seal` | `(&[u8;32], nonce, plaintext, aad) -> Vec<u8>`；`.encrypt(nonce, Payload { msg, aad })` | 24 B | **container prefix** | `Malformed("AEAD encryption failure")` | crypto.rs:71-76 |
+| `open` | `.decrypt(nonce, Payload { msg, aad })` | 24 B | **container prefix** | `Corrupt`（任何失敗，含 AAD 不符） | crypto.rs:81-86 |
+| `open_payload` | `(key, expected_kcv, nonce, ciphertext, aad)`；先 KCV 比對再 `open` | 24 B | container prefix | WrongPassphrase / Corrupt（見 §4.4） | crypto.rs:91-102 |
 
-- **完全不傳 AAD**——`encrypt`/`decrypt` 只給 `(nonce, payload)`。**明文 header 未被 AEAD 認證。** 出處：crypto.rs:68, 77。
-- Poly1305 tag 由 `chacha20poly1305` crate 附在密文尾端（密文長度 = 明文 + 16-byte tag），FCB **無**獨立 tag 欄位。出處：crypto.rs:68（隱含）。
+- **`seal` / `open` 接受 `aad` 參數**——綁定的 AAD 等於密文之前那段「逐位元的容器前綴」：offset 0 起、長度 `11 + hdr_len`（magic 4 + KIND 1 + container_version 2 + hdr_len 4 + 完整 header CBOR）。pack 對這段位元組封章、open 從讀到的位元組重組出同一段切片再驗。出處：crypto.rs:71, 81；bundle.rs:91-92, 106-107。
+- **明文 header（與框架前綴）現已被 AEAD 認證。** 任何對 magic / KIND / container_version / hdr_len / 任一 header 欄位的竄改都會改變 AAD、令 `open` 以 `Corrupt` 失敗。出處：crypto.rs:81；bundle.rs:101-116；測試 `header_tamper_is_corrupt`（bundle.rs:167-188）、`aad_mismatch_is_corrupt`（crypto.rs:177-199）。
+- Poly1305 tag 由 `chacha20poly1305` crate 附在密文尾端（密文長度 = 明文 + 16-byte tag），FCB **無**獨立 tag 欄位。出處：crypto.rs:74（隱含）。
 
 ### 4.4 WrongPassphrase vs Corrupt 決策樹
 
@@ -423,8 +424,8 @@ open_payload(key, expected_kcv, nonce, ciphertext):
 
 | 條件 | error 變體 | 出處 |
 |------|-----------|------|
-| KCV 不符（密碼錯） | `WrongPassphrase` | crypto.rs:89-91 |
-| KCV 符但 AEAD/tag 失敗（竄改） | `Corrupt` | crypto.rs:74-78 |
+| KCV 不符（密碼錯） | `WrongPassphrase` | crypto.rs:98-100 |
+| KCV 符但 AEAD/tag 失敗（竄改，含 header/AAD 竄改） | `Corrupt` | crypto.rs:81-86 |
 | nonce 長度 ≠ 24 | `Malformed(...)` | crypto.rs:54-62 |
 | zstd frame 解壓失敗 | `Corrupt` | compress.rs:35-37 |
 
@@ -442,12 +443,12 @@ open_payload(key, expected_kcv, nonce, ciphertext):
 | 壓縮等級 | `CompressionLevel::Fastest`（ruzstd 0.8 編碼僅實作 Fastest 與 Uncompressed） | compress.rs:29-31 |
 
 ```text
-pack_payload(key, nonce, plaintext):       // compress 先、encrypt 後
+pack_payload(key, nonce, plaintext, aad):  // compress 先、encrypt 後
     compressed = compress(plaintext)        // zstd Fastest -> 標準 frame
-    seal(key, nonce, compressed)            // AEAD 包住 zstd frame
+    seal(key, nonce, compressed, aad)       // AEAD 包住 zstd frame，aad = 容器前綴
 
-unpack_payload(key, kcv, nonce, ciphertext):  // 反向
-    compressed = open_payload(key, kcv, nonce, ciphertext)
+unpack_payload(key, kcv, nonce, ciphertext, aad):  // 反向
+    compressed = open_payload(key, kcv, nonce, ciphertext, aad)  // aad 不符 -> Corrupt
     decompress(compressed)
 ```
 
@@ -455,8 +456,8 @@ unpack_payload(key, kcv, nonce, ciphertext):  // 反向
 |------|------|------|
 | `compress` | `compress_to_vec(data, Fastest)`（ruzstd 0.8 encoder）；恆成功（`Ok`） | compress.rs:29-31 |
 | `decompress` | `StreamingDecoder` + `read_to_end`；**任何錯誤 → `Corrupt`** | compress.rs:34-39 |
-| `pack_payload` | compress **先**，再 `crypto::seal` | compress.rs:42-45 |
-| `unpack_payload` | `crypto::open_payload` **先**，再 `decompress` | compress.rs:48-56 |
+| `pack_payload` | compress **先**，再 `crypto::seal(key, nonce, compressed, aad)` | compress.rs:45-53 |
+| `unpack_payload` | `crypto::open_payload(key, kcv, nonce, ciphertext, aad)` **先**，再 `decompress` | compress.rs:57-66 |
 
 - 後端純 Rust `ruzstd` 0.8（無 C/FFI），native 與 `wasm32-unknown-unknown` 同一份 crate；產出標準 zstd frame，與 C-zstd reader 互通。出處：compress.rs:6-10。
 - **順序證明測試** `order_is_compress_then_encrypt`：解密後得到的正是 zstd frame——內層前 4 bytes == `ZSTD_MAGIC`，外層前 4 bytes != `ZSTD_MAGIC`。出處：compress.rs:89-105（`fn` 起點；`#[test]` 屬性在 88）。
@@ -482,14 +483,16 @@ unpack_payload(key, kcv, nonce, ciphertext):  // 反向
 | 2 | nonce | `random_bytes(24)` | bundle.rs:65 |
 | 3 | `KdfParams` | `algo="argon2id"`, salt, m/t/p（來自 params） | bundle.rs:58-64 |
 | 4 | key | `derive_key(passphrase, &kdf)` → 32 B | bundle.rs:66 |
-| 5 | key_check | `key_check_value(&key)`（**加密前**算） | bundle.rs:67 |
-| 6 | ciphertext | `pack_payload(&key, &nonce, payload)`（compress-then-encrypt） | bundle.rs:68 |
-| 7 | header | `Header{ ver:1, min_reader:1, case_id, bundle_hash, kdf, aead{algo:"xchacha20poly1305", nonce}, key_check, meta }` | bundle.rs:70-82 |
-| 8 | frame | `write_container(params.kind, &header, &ciphertext)` | bundle.rs:83 |
+| 5 | key_check | `key_check_value(&key)`（**加密前**算） | bundle.rs:72 |
+| 6 | header | `Header{ ver:1, min_reader:2, case_id, bundle_hash, kdf, aead{algo:"xchacha20poly1305", nonce}, key_check, meta }` | bundle.rs:74-88 |
+| 7 | prefix（AAD） | `encode_prefix(params.kind, &header)`（magic ‖ KIND ‖ version ‖ hdr_len ‖ hdr，長度 `11 + hdr_len`） | bundle.rs:91 |
+| 8 | ciphertext | `pack_payload(&key, &nonce, payload, &prefix)`（compress-then-encrypt，**prefix 為 AEAD AAD**） | bundle.rs:92 |
+| 9 | frame | `prefix ‖ ciphertext`（前綴已組好，直接 append 密文） | bundle.rs:93-95 |
 
+- header 須**先**建好並序列化成 prefix，才能把該 prefix 當 AAD 傳給 seal；故 v2 的步驟順序是 header → prefix → ciphertext，與舊版（先算 ciphertext 再 frame）相反。
 - RNG 失敗 → `Malformed("rng failure: {e}")`（bundle.rs:21-24）。
-- `BundleParams` 欄位：`kind, case_id, bundle_hash, meta, m_cost, t_cost, p_cost`；`BundleParams::new(...)` seed 預設 cost `19456/2/1`（bundle.rs:29-53）。
-- `open_bytes(&[u8], &str) -> Result<(BundleKind, Header, Vec<u8>)>`：`read_container` → `derive_key` → `unpack_payload`（bundle.rs:88-98）。
+- `BundleParams` 欄位：`kind, case_id, bundle_hash, meta, m_cost, t_cost, p_cost`；`BundleParams::new(...)` seed 預設 cost `19456/2/1`（bundle.rs:40-57）。
+- `open_bytes(&[u8], &str) -> Result<(BundleKind, Header, Vec<u8>)>`：`read_container` → 重組 prefix 切片為 AAD（`aad = bytes[..bytes.len() - payload.len()]`）→ `derive_key` → `unpack_payload(..., aad)`；AAD 不符（header 竄改）→ `Corrupt`（bundle.rs:101-117）。
 
 ### 6.2 `TaskSpec`（map(3)）— `task.rs:39-45`
 
@@ -682,10 +685,10 @@ verify_binding（順序）:
 
 | Header 欄位 | CBOR marker / 值 | 解碼 | 出處（build 賦值行） |
 |-------------|------------------|------|------|
-| `header_schema_ver` | `01` | uint 1 | vectors.rs:60 |
-| `min_reader` | `01` | uint 1 | vectors.rs:61 |
-| `case_id` | text | `"acme-ir-2026-03"` | vectors.rs:62 |
-| `bundle_hash` | text | `"sha256:deadbeef"`（**假佔位值**） | vectors.rs:63 |
+| `header_schema_ver` | `01` | uint 1 | vectors.rs:90 |
+| `min_reader` | `02` | uint 2（AAD-authenticated 格式） | vectors.rs:91 |
+| `case_id` | text | `"acme-ir-2026-03"` | vectors.rs:92 |
+| `bundle_hash` | text | `"sha256:deadbeef"`（**假佔位值**） | vectors.rs:93 |
 | `kdf`（map(5)） | `a5` | — | vectors.rs:28 |
 | `kdf.algo` | text | `"argon2id"`（hex `686172676f6e326964`） | vectors.rs:50 |
 | `kdf.salt` | `90` + 16 uint | array(16) = SALT bytes | vectors.rs:51 |
@@ -800,14 +803,16 @@ Package：`fcb` `0.1.0`，edition `2021`，license `MIT OR Apache-2.0`，`crate-
 8. **key** = Argon2id(passphrase UTF-8, salt, m/t/p, version 0x13, out 32 B)（§4.1）。
 9. **key_check** = SHA256(`"FCB-key-check-v1"` ‖ key)（32 B，§4.2）。
 10. **compressed** = zstd `Fastest`(payload_plain)（§5）。
-11. **ciphertext** = XChaCha20-Poly1305 seal(key, nonce, compressed)（**無 AAD**，§4.3）。
-12. **header**（struct）= `{ header_schema_ver:1, min_reader:1, case_id, bundle_hash, kdf:{algo:"argon2id", salt, m_cost, t_cost, p_cost}, aead:{algo:"xchacha20poly1305", nonce}, key_check, meta }`（§2）。
-13. **hdr** = CBOR(header)（守 §2A 的 `Vec<u8>`→array、欄位順序、key 名規則）。
-14. **輸出** = `magic(89 46 43 42) ‖ KIND(01) ‖ container_version(01 00) ‖ len(hdr) as u32 LE ‖ hdr ‖ ciphertext`（§1）。
+11. **header**（struct）= `{ header_schema_ver:1, min_reader:2, case_id, bundle_hash, kdf:{algo:"argon2id", salt, m_cost, t_cost, p_cost}, aead:{algo:"xchacha20poly1305", nonce}, key_check, meta }`（§2）。
+12. **hdr** = CBOR(header)（守 §2A 的 `Vec<u8>`→array、欄位順序、key 名規則）。
+13. **prefix（= AAD）** = `magic(89 46 43 42) ‖ KIND(01) ‖ container_version(01 00) ‖ len(hdr) as u32 LE ‖ hdr`，長度 `11 + hdr_len`（§4.3；container.rs:`encode_prefix`）。
+14. **compressed** = zstd `Fastest`(payload_plain)（§5）。
+15. **ciphertext** = XChaCha20-Poly1305 seal(key, nonce, compressed, **aad = prefix**)（§4.3）——AAD 即步驟 13 的逐位元前綴，故 header 任一 byte 改動都會令 `open` 以 `Corrupt` 失敗。
+16. **輸出** = `prefix ‖ ciphertext`（§1）。
 
 `.casework` 相同，差別：`KIND = 02`、`meta = {}`（空 map）、`payload_plain = CBOR(Submission)`（§6.4）。
 
-順序要點：`salt`/`nonce` 在推 key 前產生；`key_check` 在加密前算；`header` 在 `salt`/`nonce`/`key_check`/`bundle_hash`/`meta` 備齊後才能序列化求 `hdr_len`（`header` **不含** `ciphertext`）。
+順序要點：`salt`/`nonce` 在推 key 前產生；`key_check` 在加密前算；`header` 在 `salt`/`nonce`/`key_check`/`bundle_hash`/`meta` 備齊後才能序列化求 `hdr_len`（`header` **不含** `ciphertext`）；prefix（含 hdr）**必須在 seal 之前**先組好，因為它就是 AEAD 的 AAD，封章後不可再改動任一 byte。
 
 > **給 case builder 作者的捷徑：** Rust 寫的 case builder 直接相依 `fcb` crate（已是 `cdylib`+`rlib`），呼叫 **`fcb::case::pack_case(&CaseInput, passphrase)`** 即一步完成 `{streams}` 信封、canonical `bundle_hash` 與封裝，零 CBOR 漂移風險（`{streams:[...]}` payload 信封與 `bundle_hash` 正規定義現皆有公開 helper）。只有用**非 Rust** 重寫 codec 時才需逐位元對齊本檔並以 golden vectors（§8）驗證。
 
@@ -820,7 +825,7 @@ Package：`fcb` `0.1.0`，edition `2021`，license `MIT OR Apache-2.0`，`crate-
 3. `Vec<u8>`（salt/nonce/key_check）→ CBOR array of uint，**非** byte string。（§2A；vectors.rs:28）
 4. struct → text-key map、順序 = 宣告序；無 `rename_all` 時 key = 欄位名。（§2A）
 5. 管線順序：pack = compress→encrypt；open = decrypt→decompress。（§5；compress.rs:42-56）
-6. AEAD **無 AAD** → 明文 header（含 case_id/bundle_hash/meta）**未被 AEAD 認證**。（§4.3；crypto.rs:68,77）
+6. AEAD **以容器前綴為 AAD** → 明文 header（含 case_id/bundle_hash/meta）連同 magic/KIND/version/hdr_len 一併**被 AEAD 認證**；任一 byte 竄改 → `open` 失敗為 `Corrupt`。（§4.3；crypto.rs:71,81；bundle.rs:91-92,106-107）
 7. `kdf.algo` **驗證**（≠argon2id → Malformed）；`aead.algo` **永不驗證**。（§4.1）
 8. KCV = `SHA256(domain ‖ key)`——domain 先、key 後。（§4.2；crypto.rs:44-47）
 9. WrongPassphrase ⟺ KCV 不符；Corrupt ⟺ KCV 符但 AEAD/zstd 失敗；Malformed ⟺ nonce 長度錯。（§4.4）
@@ -831,5 +836,5 @@ Package：`fcb` `0.1.0`，edition `2021`，license `MIT OR Apache-2.0`，`crate-
 14. 答案安全：`TaskSpec`/`TaskStep` 無答案欄位；typed-model 解碼丟棄洩漏答案；`FORBIDDEN_ANSWER_KEYS` 固定 5 個。（§6.6）
 15. `open_submission` KIND-gated（只收 Work）；submission meta 恆為空 map。（§6.4）
 16. binding 優先序：case 身分 > evidence 版本（case_id 先檢查）。（§6.5）
-17. `bundle_hash` = `"sha256:" + lower_hex(SHA256(bytes))`，總長 71 chars；涵蓋範圍由生產端負責、codec 不驗證。（§6.5）
+17. `bundle_hash` = `"sha256:" + lower_hex(SHA256(bytes))`，總長 71 chars；container/crypto 層不驗涵蓋範圍，但 `.case` 開檔路徑（`open_case`）會對解密後 payload **重算** canonical hash 並比對 header，不符 → `Corrupt`（`.casework` 的 header `bundle_hash` 是綁定參照、非 submission payload 之 hash，故不重算）。（§6.5；wasm/src/lib.rs:164-166）
 18. golden vector byte 穩定：固定 salt/nonce 重建須產生相同 hex，否則「format drifted」測試失敗。（§8.7）

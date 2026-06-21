@@ -11,7 +11,10 @@
 
 > ### ⚠️ 安全須知（接 codec 前先讀）
 >
-> - **明文 header 未被 AEAD 認證。** container 的 header（含 `case_id`、`bundle_hash`、manifest、task）是**明文、未簽章**，只有 payload 走過 AEAD 驗證。換句話說，任何能產檔的人都能在 header 填任意值。所以**收件端的 binding 檢查是必要的，不是選用的**（§1.6 / §5）。該信任的是「**解密後 payload** 裡的值」，以及「對 payload 重算出的 canonical `bundle_hash`」，而不是 header 上那串字。
+> - **明文 header（含框架前綴）現已被 AEAD 認證。** container 的 header（含 `case_id`、`bundle_hash`、manifest、task）雖然在磁碟上仍是明文（salt/nonce/KDF 參數必須在推 key 前就讀得到），但整段「容器前綴」（magic、KIND、container_version、hdr_len、完整 header CBOR）會被綁進 XChaCha20-Poly1305 的 **additional authenticated data（AAD）**。任何對 header 任一 byte 的竄改都會破壞 AEAD tag，`open`／`openCase`／`openSubmission` 一律以 **Corrupt** 失敗——封檔後就無法在不知道密碼的情況下偷改 header 而不被發現。
+> - **`.case` 開檔還會額外核對 `bundle_hash` 內容位址。** 對 `.case` 而言 `bundle_hash` 就是 canonical payload 的 SHA-256，所以 `openCase` 會對**解密後的 payload 重算** canonical `bundle_hash` 並與 header 比對，不符即 **Corrupt**——擋下「header 與 payload 不一致」的偽造檔。（`.casework` 的 header `bundle_hash` 是**綁定參照**、指向某個 `.case` 的證物版本，並非 submission payload 自身的 hash，故 `openSubmission` **不**重算它。）
+> - **`.casework` 收件端的 binding 檢查仍是必要的，不是選用的。** AEAD 只保證 header「未被竄改」，不保證學生填進去的 `case_id`／`bundle_hash` 真的對得上你手上的那份 `.case`。收件時請以**解密後** `Submission` 裡的 `case_id` 與 `bundle_hash` 走 `verify_binding`（§1.6 / §5），而不是只看欄位長相。
+> - **仍存在的設計性提醒（by design）：** `bundle_hash` 是對**明文 payload** 算的 content hash，對低熵 payload 會構成一個 **confirmation oracle**（攻擊者若能猜出 payload，便能用公開的 `bundle_hash` 驗證猜測）；且此 binding 對「**重新封裝**」敏感——只要 payload 的 canonical 位元組有任何差異，重算出的 `bundle_hash` 就會不同，無法以此判定「語意上等價」的兩份證物。
 > - **每次封裝都產新的隨機 salt/nonce。** `pack_case` 與 `pack_submission` 內部會各自產出 fresh salt（16 B）與 nonce（24 B）。**千萬不要跨 bundle 快取或重用 key／nonce**，這份隨機性正是安全邊界所在。
 > - **passphrase 是使用者輸入的字串。** 任意 UTF-8 都收，codec **不強制**長度或強度（Argon2id 會拖慢暴力破解，但弱密碼還是猜得出來）。請在 UI 引導使用者選一個熵夠高的密碼（互動解鎖建議 ≥128 bit 熵）。`.case` 與 `.casework` 的密碼**各自獨立**。
 > - **密碼不會被自動清零。** API 收的是 `&str`，Rust **不會**在用完後幫你把密碼位元組從記憶體抹掉。長駐的生產工具（CLI／服務）建議拿 [`zeroize`](https://docs.rs/zeroize/) 之類的型別把輸入包起來，用完即清。
@@ -243,10 +246,10 @@ const caseObject = {
 const caseBytes = fcb.packCase(caseObject, "passphrase");   // Uint8Array，可寫成 .case 檔
 ```
 
-兩個 footgun，踩到都不會報錯、只會讓 `bundle_hash` 和 native producer 對不上：
+兩個 footgun：
 
-- **Footgun 1：manifest 每筆用鍵 `type`，不是 `stream_type`。** wire 與 JS 物件裡這個欄位都叫 `type`（Rust 端才是 `StreamManifest.stream_type`）。寫成 `stream_type` 會被當成缺 `type`，反序列化就壞。
-- **Footgun 2：整數 record 值必須落在 JS safe-integer 範圍內。** record 裡的整數若超過 `2^53-1`（`Number.MAX_SAFE_INTEGER`），用普通 JS number 傳會**靜默**退化成 float，canonical CBOR 因此不同，算出來的 `bundle_hash` 就會和 native-authored case 不一致。超過範圍的整數**務必**以 `BigInt` 傳入（例如 `9007199254784000n`）；safe range 內的整數照常用 number 即可。
+- **Footgun 1：manifest 每筆用鍵 `type`，不是 `stream_type`。** wire 與 JS 物件裡這個欄位都叫 `type`（Rust 端才是 `StreamManifest.stream_type`）。寫成 `stream_type` 會被當成缺 `type`，反序列化就壞——這個會回 kind `malformed`。
+- **Footgun 2：超過 JS safe-integer 範圍的整數 record 值必須用 `BigInt` 傳。** record 裡的整數若超過 `2^53-1`（`Number.MAX_SAFE_INTEGER`），用普通 JS number 傳會被編成 CBOR float，canonical 位元組因此與 native producer 不同。pack 邊界現在會**主動擋下**這種「整數值卻超出 safe range 的 plain number」，回 kind `malformed`（不再靜默退化成 float、也不會默默產出對不上的 `bundle_hash`）。超過範圍的整數**務必**以 `BigInt` 傳入（例如 `9007199254784000n`，serde-wasm-bindgen 會編成 CBOR 整數）；safe range 內的整數照常用 number 即可。
 
 ---
 

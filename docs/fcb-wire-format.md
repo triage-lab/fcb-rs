@@ -41,14 +41,16 @@
 ├───────────────────────────────────────────────────────────────────────┤
 │ payload ── 其餘全部 = AEAD( zstd( 明文 payload ) )                     │
 └───────────────────────────────────────────────────────────────────────┘
-        ▲ header 明文、未被 AEAD 認證          ▲ 只有這層被 AEAD 認證
+        ▲ header 明文，但整段前綴綁進 AAD     ▲ 這層被 AEAD 加密＋認證
+          → 一併被 AEAD 認證                    （前綴是它的 AAD）
 ```
 
 兩個設計直覺先講在前面，後面各節都圍著它打轉：
 
 - **header 為什麼明文？** 因為解鎖前你就需要 KDF 的 `salt`/`params` 與 AEAD 的 `nonce` 才能推 key；
   這些本來就不是秘密。也因此消費端（browser workbench / 教師審閱平台）能在「還沒輸入 passphrase」
-  時先 `peek_header` 顯示 case 資訊。代價是：**明文 header 不被 AEAD 認證**（見 §3 安全特性）。
+  時先 `peek_header` 顯示 case 資訊。header 雖是明文、可在解鎖前讀，但**整段明文前綴（含 header）會綁進
+  AEAD 的 AAD**，所以仍被認證——竄改 header 任一欄位都會讓 `open` 失敗（見 §3 安全特性）。
 - **payload 為什麼先壓再加密？** 密文近似亂數、壓不動；先 zstd 壓縮重複性高的 log 再 AEAD 封裝，
   才省得到空間（見 §3）。
 
@@ -91,8 +93,10 @@ magic(4) | KIND(u8) | container_version(u16 LE) | hdr_len(u32 LE)
 | `read_container(bytes)` | 解析完整 frame，交給 `open_bytes` 解密 | 是（`bytes[pos..]`） | 同上，外加保留 `kind` / `container_version` | `container.rs:180-214` |
 
 兩者檢查順序一致：magic → KIND → container_version（`peek` 丟棄、`read` 保留）→ `hdr_len` →
-header 範圍 → header CBOR → `min_reader`。`min_reader > READER_VERSION`（目前 `1`，`container.rs:29`）
-→ `UnsupportedVersion`（`container.rs:169-173, 199-203`）。
+header 範圍 → header CBOR → `min_reader`。`min_reader > READER_VERSION`（目前 `2`，`container.rs:32`）
+→ `UnsupportedVersion`（`container.rs:169-173, 199-203`）。`READER_VERSION` 從 `1` 升到 `2`，是因為
+明文 header 改為綁進 AEAD AAD（見 §3）：pre-AAD 的 v1 reader 沒有 AAD 步驟、開不了新 bundle，所以新
+bundle 寫 `min_reader = 2` 讓舊 reader 優雅拒絕。
 
 `read_u16` / `read_u32` 越界 → `Malformed("truncated u16"/"truncated u32")`
 （`container.rs:112-126`）；header 範圍越界 → `Malformed("header length out of bounds")`
@@ -142,8 +146,8 @@ a8 ...        header CBOR：map(8 entries)…
 
 ```text
 Header = {                          // CBOR map(8) → 起頭 a8
-  "header_schema_ver": u16,         // 目前 1（container.rs:86；寫入 bundle.rs:71）
-  "min_reader":        u16,         // 目前 1（container.rs:88；寫入 bundle.rs:72）
+  "header_schema_ver": u16,         // 目前 1（container.rs:86；寫入 bundle.rs:75）
+  "min_reader":        u16,         // 目前 2（AAD 格式；container.rs:88；寫入 bundle.rs:78）
   "case_id":           text,        // 教師指派、穩定的題目識別碼（container.rs:90）
   "bundle_hash":       text,        // 綁定證物版本，格式 "sha256:<hex>"（container.rs:92；見 §5）
   "kdf":  { … 5 欄位 → a5 },         // 見下（container.rs:93）
@@ -206,7 +210,7 @@ a8                                   header = CBOR map(8)
   71 6865616465725f736368656d615f766572  key "header_schema_ver"  (0x60+17 → 0x71，後接 17 個 UTF-8 byte)
   01                                   value 1
   6a 6d696e5f726561646572            key "min_reader"          (0x60+10 → 0x6a)
-  01                                   value 1
+  02                                   value 2                   (AAD 格式：min_reader = 2)
   67 636173655f6964                  key "case_id"             (0x60+7 → 0x67)
   6f 61636d652d69722d323032362d3033  value "acme-ir-2026-03"   (0x60+15 → 0x6f)
   6b 62756e646c655f68617368          key "bundle_hash"         (0x60+11 → 0x6b)
@@ -348,20 +352,28 @@ open:    payload --AEAD decrypt--> zstd_frame --zstd decompress--> plaintext
   實作、不要使用（`compress.rs:24-28`）。`Fastest` 對重複性高的 log 已有好壓縮比。frame 格式與
   更高等級相容、未來可無縫升級，並能與 C zstd reader 互通。
 - **加密**：XChaCha20-Poly1305（`chacha20poly1305` 0.10）。key = §4 推導的 32 bytes、nonce =
-  `header.aead.nonce`（24 bytes）、**無 AAD**（`seal`/`open` 只傳 `(nonce, plaintext)`，`crypto.rs:68, 77`）。
-  Poly1305 tag 由 crate 附在密文尾端（密文長 = 明文 + 16-byte tag），FCB 沒有獨立 tag 欄位
-  （`crypto.rs:68`）。
+  `header.aead.nonce`（24 bytes）、**AAD = 明文 container 前綴**（magic、KIND、container_version、hdr_len、
+  以及完整 header CBOR；pack 對 `encode_prefix(...)` 封裝，open 取 `bytes[..bytes.len()-payload.len()]` 為
+  AAD，`crypto.rs:71, 81`）。Poly1305 tag 由 crate 附在密文尾端（密文長 = 明文 + 16-byte tag），FCB 沒有
+  獨立 tag 欄位（`crypto.rs:71`）。
 
 順序由測試 `order_is_compress_then_encrypt` 鎖定：解密 packed payload 得到的正是 zstd frame，
 其前 4 byte == `ZSTD_MAGIC`、而外層密文前 4 byte != `ZSTD_MAGIC`（`compress.rs:89-105`，`fn` 起點）。
 
 > ### 安全特性（務必知道）
 >
-> - **AEAD 只認證 payload。** 明文 header（含 `case_id`、`bundle_hash`、`meta` 裡的 manifest/task）
->   **未被 AEAD 認證**（沒有 AAD，`crypto.rs:68, 77`）——竄改 header 不會被 AEAD 偵測到。
-> - **`key_check` 只認證「key 正確」**、**payload AEAD 只認證「payload 未被動」**。兩者各管一段。
-> - 證物版本綁定靠 `bundle_hash`（見 §5、data-model §5），但 **codec 不會驗證 `bundle_hash` 是否
->   真的等於 payload 的 hash**——那是生產端（case builder）的責任，涵蓋範圍也由生產端定義。
+> - **AEAD 同時認證 payload 與整段明文 header／前綴。** 封裝時把明文 container 前綴（magic、KIND、
+>   container_version、hdr_len、完整 header CBOR）綁進 AEAD 的 AAD（`crypto.rs:71, 81`、`bundle.rs:91-92`）。
+>   因此竄改 header 任一欄位（含 `case_id`、`bundle_hash`、`meta` 裡的 manifest/task）——只要 passphrase
+>   正確、header 仍能解析——`open` 都會失敗為 **`Corrupt`**（測試 `header_tamper_is_corrupt`，`bundle.rs`）。
+>   注意結構性檢查仍先行：magic 壞 → `BadMagic`、未知 KIND → `Malformed`。
+> - **`.case` 開封會驗證內容定址。** `open_case`（fcb-wasm）對解密後的 canonical payload **重算 `bundle_hash`
+>   並和 header 值比對**，不符即 `Corrupt`（`fcb-wasm/src/lib.rs`，`open_case`）。AAD 只保證 `bundle_hash`
+>   欄位沒被竄改、不保證它等於 payload 的 hash，故 `.case` 路徑額外重算。**`.casework` 不做此重算**——
+>   submission 的 header `bundle_hash` 是綁回其 case 的參照，不是 submission payload 的雜湊。
+> - **`key_check` 只認證「key 正確」**、**payload AEAD 認證「payload 未被動」、AAD 認證「header／前綴未被動」**。
+> - 證物版本綁定靠 `bundle_hash`（見 §5、data-model §5）；`.case` 路徑已由 `open_case` 重算驗證，
+>   低階 `compute_bundle_hash` 本身仍不強制涵蓋範圍。
 
 ---
 
@@ -423,9 +435,10 @@ key_check = SHA256( "FCB-key-check-v1" || key )     // 32 bytes（domain 在前�
 
 ### AEAD：XChaCha20-Poly1305
 
-key = 上面 32 bytes、nonce = 24 bytes（`header.aead.nonce`）、**無 AAD**。`nonce_from` 強制
-`len == 24`，否則 `Malformed("nonce must be 24 bytes, got N")`（`crypto.rs:54-62`）。tag 附在密文尾端
-（標準 AEAD 輸出，`crypto.rs:68`）。
+key = 上面 32 bytes、nonce = 24 bytes（`header.aead.nonce`）、**AAD = 明文 container 前綴**（magic、KIND、
+container_version、hdr_len、完整 header CBOR；見 §3）。`nonce_from` 強制 `len == 24`，否則
+`Malformed("nonce must be 24 bytes, got N")`（`crypto.rs:57-65`）。tag 附在密文尾端（標準 AEAD 輸出，
+`crypto.rs:71`）。`seal`／`open` 都收 `aad: &[u8]`；AAD 不符即視為竄改、失敗為 `Corrupt`。
 
 ---
 
@@ -506,14 +519,24 @@ stream 記錄的逐欄 schema、演進／相容規則一律見 [`fcb-data-model.
 7. **隨機**產生 `salt`(16 B) 與 `nonce`(24 B)（`bundle.rs:60, 65`，`getrandom`）。
 8. **key** = Argon2id(passphrase UTF-8, salt, m/t/p, version 0x13, out 32 B)（`bundle.rs:66`）。
 9. **key_check** = SHA256(`"FCB-key-check-v1"` ‖ key)（32 B；**加密前**算好，`bundle.rs:67`）。
-10. **compressed** = zstd `Fastest`(payload_plain)。
-11. **ciphertext** = XChaCha20-Poly1305 seal(key, nonce, compressed)（**無 AAD**，`bundle.rs:68`）。
-12. **header**（struct）= `{ header_schema_ver: 1, min_reader: 1, case_id, bundle_hash,
+10. **先組 header 與前綴**（step 11 的 AAD 需要它）：`min_reader = 2`、`bundle_hash`、`meta` 等備齊後組成
+    `header`（struct），再以 `encode_prefix(KIND, header)` 序列化出明文前綴
+    （magic ‖ KIND ‖ container_version ‖ hdr_len ‖ hdr，`bundle.rs:91`）。
+11. **compressed** = zstd `Fastest`(payload_plain)。
+12. **ciphertext** = XChaCha20-Poly1305 seal(key, nonce, compressed)，**AAD = step 10 的明文前綴**
+    （`bundle.rs:92`）。竄改前綴任一 byte（含 header 任一欄位）都會讓 open 失敗為 `Corrupt`。
+13. **輸出位元組** = `前綴 ‖ ciphertext`（前綴即 `magic(89 46 43 42) ‖ KIND(0x01) ‖
+    container_version(01 00) ‖ len(hdr) as u32 LE ‖ hdr`，`bundle.rs:91-95`、`container.rs:145-153`）。
+    header struct 內容為 `{ header_schema_ver: 1, min_reader: 2, case_id, bundle_hash,
     kdf: {algo:"argon2id", salt, m_cost, t_cost, p_cost}, aead: {algo:"xchacha20poly1305", nonce},
-    key_check, meta }`（`bundle.rs:70-82`）。
-13. **hdr** = CBOR(header)（套用 §2 的 `Vec<u8>`→array、欄位順序、key 名等規則）。
-14. **輸出位元組** = `magic(89 46 43 42) ‖ KIND(0x01) ‖ container_version(01 00) ‖
-    len(hdr) as u32 LE ‖ hdr ‖ ciphertext`（`container.rs:140-145`）。
+    key_check, meta }`（`bundle.rs:74-88`），`hdr` 為其 CBOR（套用 §2 的 `Vec<u8>`→array、欄位順序、
+    key 名等規則）。
+
+> ℹ️ **JS/wasm 作者：超 safe-integer 的整數要用 BigInt。** 透過 `fcb-wasm` 的 `packCase`／`packSubmission`
+> 打包時，記錄裡若有**絕對值超過 `2^53 - 1`（= 9007199254740991）的整數**，用普通 JS `number` 會被
+> serde 編成 CBOR float、和原生整數作者的雜湊發散，故 pack 邊界會以 `malformed` **拒絕**它（訊息提示
+> 「supply it as a BigInt」）。改用 `BigInt` 即無損編成 CBOR 整數（最高到 `u64::MAX`）。safe-range 整數與
+> 真正的小數 float 都照常接受、且確定。詳見 §9「pack 邊界數值確定性契約」。
 
 > `.casework` 相同，差別只在：`KIND = 0x02`、`meta = {}`（空 map）、`payload_plain = CBOR(Submission)`
 > （見 data-model §4）。
@@ -529,9 +552,10 @@ stream 記錄的逐欄 schema、演進／相容規則一律見 [`fcb-data-model.
 > 自組 `CasePayload { streams }` → `cbor::encode` → `BundleParams::new` → `pack_bytes` → `open_bytes`），
 > 以及 `README.md` §「給 case builder 作者的起手建議」的 `use` 匯入範例。
 
-順序要點：`salt`/`nonce` 在推 key 前就要產生，`key_check` 在加密前算好。最後 `header` 要等
+順序要點：`salt`/`nonce` 在推 key 前就要產生，`key_check` 在加密前算好。`header` 要等
 `salt`/`nonce`/`key_check`/`bundle_hash`/`meta` 都備齊後才能序列化求 `hdr_len`（`header` 不含
-`ciphertext`）。
+`ciphertext`）。又因 header／前綴是 AEAD 的 AAD，**前綴必須在 seal 之前先序列化**（`encode_prefix` 先行、
+seal 才把它當 AAD 綁進 tag），這也是 step 10 先於 step 12 的原因。
 
 > **case builder（建構器）作者建議：** Rust 寫的 case builder 直接相依 `fcb` crate（已是
 > `crate-type = ["cdylib", "rlib"]`），呼叫 `bundle::pack_bytes` 就能拿到 byte-相容輸出；
@@ -555,11 +579,29 @@ stream 記錄的逐欄 schema、演進／相容規則一律見 [`fcb-data-model.
   manifest、用 `id` 去 payload 找對應，`evidence.rs:77-93`）；反過來 payload 若多出 manifest 沒列的
   stream，會被**靜默忽略**，且**沒有測試斷言**這個行為是否刻意（未證實）。相對地，manifest 列了但
   payload 缺對應 stream → `Malformed("payload missing stream {id}")`（`evidence.rs:84`）。
+- **`manifest.records` 宣告筆數僅供參考（advisory）。** manifest 每條 stream 帶的 `records` 計數，pack
+  與 open **都不會**拿它和實際記錄數核對——消費端應以**開封後 payload** 解出的記錄為準推導筆數，不要信
+  peek 階段宣告的 `records`（與上一條「payload 多餘 stream 靜默忽略」是同一類不強制不變量）。
+
+### 設計取捨（by-design caveat，非缺口）
+
+- **`bundle_hash` 是明文 payload 的確認 oracle（低熵情境）。** `bundle_hash` 是**明文 payload 的 SHA-256**、
+  存在不需 passphrase 就能讀的明文 header 裡（§5）。對**低熵／可猜的 payload**，能猜中 payload 的人可藉這個
+  雜湊**確認**猜測。高熵／大型 payload 不受影響。這是內容定址綁定的固有取捨，非漏洞。
+- **binding 對 re-pack 敏感——發題後請凍結 payload。** 因 `bundle_hash` 是內容定址，case payload **任何**
+  重新封裝（即使只改一個 byte）都得到新雜湊，讓既有 submission 的 binding 變成 `evidence-version-mismatch`
+  （data-model §7）。要避免誤判，請在發題後**凍結** case payload，別重 pack。
+
+### pack 邊界數值確定性契約（fcb-wasm）
+
+- JS/wasm 經 `packCase`／`packSubmission` 打包時，記錄裡**絕對值超過 `2^53 - 1`（= 9007199254740991）的
+  整數**若以普通 JS `number` 提供，serde 會編成 CBOR float、和原生整數作者的 canonical payload／雜湊發散；
+  故 pack 邊界會以 `malformed` **拒絕**它，要求改用 `BigInt`（無損編成 CBOR 整數，最高到 `u64::MAX`；超過
+  u64 會在 deserialize 階段失敗）。safe-range 整數與真正的小數 float 照常接受、且確定。case stream 記錄與
+  submission 的 notes/report/activity 都套用此契約（`fcb-wasm/src/lib.rs`，`check_numeric_determinism`）。
 
 ### Non-Goals（本格式刻意不做的事）
 
-- **不認證明文 header。** AEAD 沒有 AAD，header 竄改不會被 codec 偵測（§3）；防竄改要靠上層
-  （例如把整檔簽章），不在 codec 範圍。
 - **不驗證 `aead.algo`。** 只認 `kdf.algo == "argon2id"`（§4）。
 - **`container_version` 不做 parse-path 分派。** 目前只有 v1 一種佈局，欄位保留給未來（§1）。
 - **codec 不解讀 `meta` 的語意。** container 層把 `meta` 當 opaque CBOR；stream/task/submission 的

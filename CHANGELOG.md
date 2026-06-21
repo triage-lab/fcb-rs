@@ -6,6 +6,12 @@
 
 從 `browser-arena` 數位鑑識教學平台抽離為獨立 repo 後的第一批 codec 補完與使用者／OSS 文件。
 
+### Security
+
+- **🔒 [BREAKING] 明文 header 改由 AEAD AAD 認證。** 整段明文 container 前綴（magic、KIND、`container_version`、`hdr_len`、完整 header CBOR）綁進 XChaCha20-Poly1305 的 additional authenticated data；`seal`／`open` 改收 `aad: &[u8]`。竄改 header 任一欄位（含 task prompt、manifest、`case_id`、`bundle_hash`）開封都會失敗為 `Corrupt`（magic→`BadMagic`、未知 KIND→`Malformed` 仍先做結構性檢查）。**沒有任何 legacy（無 AAD）bundle 仍可讀**。
+- **🔒 `.case` 開封驗證內容定址。** `open_case`（fcb-wasm）對解密後的 canonical payload **重算 `bundle_hash` 並和 header 值比對**，不符即 `Corrupt`。此檢查**僅限 `.case`**：`.casework` 的 header `bundle_hash` 是綁回其 case 的參照、非 submission payload 的雜湊，故 `open_submission` 不重算。
+- **🔒 [BREAKING for JS authors] pack 邊界數值確定性契約。** `packCase`／`packSubmission` 對記錄裡**絕對值超過 `2^53 - 1`（= 9007199254740991）的整數**——若以普通 JS `number` 提供——會以 `malformed` **拒絕**（serde 會把它編成 CBOR float、和原生整數作者的雜湊發散）；請改用 `BigInt`（無損編成 CBOR 整數，最高到 `u64::MAX`）。safe-range 整數與真正的小數 float 照常接受、且確定。case stream 記錄與 submission 的 notes/report/activity 都套用。
+
 ### Added
 
 - **`fcb::case` 模組**：公開 `.case` 產出介面——`CasePayload { streams }` 信封型別、`to_canonical_bytes()` 單一序列化入口、`case_bundle_hash()`（凍結 canonical `bundle_hash = sha256(明文 payload bytes)`）、`pack_case(&CaseInput, passphrase)` 產出 helper（對齊 `pack_submission`，並拒絕空 manifest）。
@@ -17,6 +23,7 @@
 
 ### Changed
 
+- **🔒 [BREAKING] `READER_VERSION` 由 `1` 升為 `2`，packed bundle 寫 `min_reader = 2`。** 因明文 header 改綁進 AEAD AAD，pre-AAD（v1）reader 沒有 AAD 步驟、開不了新 bundle，故新 bundle 宣告 `min_reader = 2`、讓舊 reader 以 `UnsupportedVersion` **優雅拒絕**。`container_version` 維持 `1`（佈局不變）、`header_schema_ver` 維持 `1`。
 - **授權**：由 `MIT OR Apache-2.0` 改為 **`ECL-2.0`**（Educational Community License v2.0），更貼合本專案教育情境；`Cargo.toml` 補 `repository` 與 `readme` metadata。
 - **WASM bridge**：改用 `fcb` crate 公開的 `CasePayload`，消除生產／消費／測試三份重複的信封定義。
 - **協定 docs**：`docs/fcb-*.md` 的「已知缺口（Known Gaps）」移除本批已關閉項目（pack_case、canonical bundle_hash、netflow/json schema、Submission 向量），並補上對應正式說明。
@@ -25,7 +32,7 @@
 ### Notes
 
 - **`Submission` 的 byte-exactness 自本批起才由 golden vector（`FROZEN_SUBMISSION_HEX`）驗證**；先前僅 `FROZEN_WORK_HEX`（test-local 3 欄 `WorkPayload`）與隨機 salt 的 round-trip 覆蓋。非 Rust 重實作者請以本版起的向量為相容性基準。
-- 既有 golden vectors（`FROZEN_CASE_HEX`、`FROZEN_WORK_HEX`）在本批維持**逐位元不變**；wire format 未變動。
+- **golden vectors 因 AAD 變更已重新產生，但 canonical payload bytes 與 `bundle_hash` 維持不變。** 線上格式只有兩處變：(a) `min_reader` byte 由 `01` 翻為 `02`；(b) 結尾 AEAD tag bytes 不同。所有長度皆不變——`.case` 仍 578 bytes（11 prefix + 476 header + 91 payload）、`.casework`／submission 長度不變、`hdr_len` 仍 476／293。non-Rust 重實作者請以本版起的向量為相容性基準。
 
 ---
 
