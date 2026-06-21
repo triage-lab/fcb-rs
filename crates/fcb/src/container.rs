@@ -131,10 +131,14 @@ fn read_u32(b: &[u8], pos: &mut usize) -> Result<u32> {
 /// Slice the `hdr_len`-byte header beginning at `pos`, computing the end offset
 /// with overflow-safe arithmetic. `hdr_len` is derived from an untrusted `u32`
 /// length prefix; on a 32-bit target (e.g. `wasm32`) a value near `u32::MAX`
-/// makes `pos + hdr_len` overflow `usize`, which would panic in a debug build
-/// or wrap to an in-range-but-wrong slice in release. `checked_add` turns any
-/// overflowing or out-of-bounds length into a `Malformed` rejection on every
-/// target, without changing the result for a well-formed container.
+/// makes `pos + hdr_len` overflow `usize`, which panics in a debug build (the
+/// reachable defect — an abort/DoS). In release it wraps, but because `pos` is
+/// the small fixed-prefix offset the wrapped end lands below `pos`, so the
+/// backwards `bytes.get(pos..end)` is already rejected as `None` today.
+/// `checked_add` turns any overflowing or out-of-bounds length into a
+/// `Malformed` rejection on every target — panic-free, and robust even if
+/// `pos` were ever large — without changing the result for a well-formed
+/// container.
 fn header_slice(bytes: &[u8], pos: usize, hdr_len: usize) -> Result<&[u8]> {
     pos.checked_add(hdr_len)
         .and_then(|end| bytes.get(pos..end))

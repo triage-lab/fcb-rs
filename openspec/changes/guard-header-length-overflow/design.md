@@ -3,7 +3,7 @@
 `crates/fcb/src/container.rs` 解析 container 時，`peek_header` 與 `read_container` 都用 `bytes.get(pos..pos + hdr_len)` 取標頭切片，其中 `hdr_len = read_u32(...) as usize` 來自不受信任的 wire bytes。位移 `pos` 在讀完 magic(4)+KIND(1)+container_version(2)+hdr_len(4) 後為 11。
 
 - **64-bit target**：`11 + u32::MAX ≈ 4.3e9 ≪ usize::MAX`，不會溢位；`.get()` 對超界範圍回 `None`，落到既有的 `Malformed` 分支。所以 64-bit 本來就安全。
-- **32-bit target（wasm32，`usize = u32`）**：`11 + u32::MAX` 溢位 `usize`。debug build（含 overflow-checks）會 **panic**；release build 則 wrap 成一個「start>end 或界內但錯誤」的範圍。fcb-wasm 編到 wasm32 並對外提供 `openCase`，故此路徑可達。
+- **32-bit target（wasm32，`usize = u32`）**：`11 + u32::MAX` 溢位 `usize`。debug build（含 overflow-checks）會 **panic**——這是實際可觸及的缺陷（abort／DoS）。release build 會 wrap，但 `pos` 為固定前綴小位移（11），wrap 後的 end 必 < `pos`，`bytes.get(pos..end)` 為反向區間 → 今天就回 `None` → `Malformed`（已安全）。改用 `checked_add` 的價值在於消除 debug panic、讓拒絕在所有 target 明確，並 foreclose 日後 `pos` 變大時的潛在 wrong-slice footgun。fcb-wasm 編到 wasm32 並對外提供 `openCase`，故 debug panic 路徑可達。
 
 ## Goals / Non-Goals
 
