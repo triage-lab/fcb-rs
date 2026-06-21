@@ -286,7 +286,7 @@ Derives：`Debug, Clone, PartialEq`（**非** Serialize/Deserialize）（evidenc
 - **非封閉清單**：此集合只區分「有內建 handler」vs「需 plugin / generic fallback」，新 type **不需**列入。出處：evidence.rs:15-17。
 - **未知 type 不致命**：仍 decode，只是 `is_builtin = false`。出處：evidence.rs:77-93；測試 `unknown_type_does_not_abort_other_streams` evidence.rs:136-152（`#[test]` 屬性在 135）。
 - **唯一結構性 error**：manifest 有列但 payload 找不到對應 `id` → `Malformed("payload missing stream {id}")`。反向（payload 有但 manifest 無）**不檢查**，多餘 payload stream 被靜默忽略（iteration 由 manifest 驅動）。出處：evidence.rs:81-84, 78-92。
-- 只有 `fcb.syslog.v1` 有凍結記錄 schema（§3.5）；`fcb.netflow.v1` / `fcb.json.v1` **無記錄 schema 定義**（已知缺口，見 §9）。出處：evidence.rs:18；docs/fcb-data-model.md:210-214。
+- 三個內建型別皆有凍結記錄 schema：`fcb.syslog.v1`（data-model §3.1）、`fcb.netflow.v1`（data-model §3.2）、`fcb.json.v1`（data-model §3.3）；各以 `crates/fcb/tests/stream_types.rs` 的 round-trip 測試凍結（`syslog_v1_*`、`netflow_v1_records_round_trip_byte_faithfully`、`json_v1_records_round_trip_byte_faithfully`）。出處：evidence.rs:18；docs/fcb-data-model.md §3.1–§3.3。
 
 ### 3.4a evidence 函式
 
@@ -746,14 +746,15 @@ verify_binding（順序）:
 
 | 缺口 | 現況 | 出處 |
 |------|------|------|
-| **`fcb.netflow.v1` / `fcb.json.v1` 無記錄 schema** | 列在 `BUILTIN_STREAM_TYPES` 但 spec/crate 皆未定義其 record schema | evidence.rs:18；docs/fcb-data-model.md §3.2 |
 | **WASM 綁定最小** | `wasm.rs` 只導出 `fcb_version() -> String`（回 `CARGO_PKG_VERSION`），**無** `openBundle`/`packSubmission` 綁定（註：`fcb-wasm` bridge crate 已有較完整 native core） | wasm.rs:6-13；crates/fcb-wasm/src/lib.rs |
 | **plugin registry 未實作** | `DecodedStream.is_builtin == false` 註解提及「a registered plugin」，但本 crate **無** registry 程式碼——是消費端（前端）概念 | evidence.rs:50（**未證實**有 registry） |
 | **多餘 payload stream 是否拒絕未測** | 原始碼顯示靜默忽略（manifest 驅動 iteration），但無測試斷言任一方向 | evidence.rs:78-92（**未證實**） |
 
 > ✅ **已關閉（本批）：** `pack_case` / `CasePayload` 公開寫入 helper（`crates/fcb/src/case.rs`）、canonical
 > `bundle_hash` 凍結（`case::case_bundle_hash` = `compute_bundle_hash(明文 payload bytes)`，由 `pack_case`
-> 自動帶入；回歸 `vectors.rs` 的 `case_canonical_bundle_hash_is_frozen`、`pack_case_round_trips_and_binds_hash`）。
+> 自動帶入；回歸 `vectors.rs` 的 `case_canonical_bundle_hash_is_frozen`、`pack_case_round_trips_and_binds_hash`）；
+> **`fcb.netflow.v1` / `fcb.json.v1` 記錄 schema 凍結**（data-model §3.2／§3.3；`stream_types.rs` 的
+> `netflow_v1_records_round_trip_byte_faithfully`、`json_v1_records_round_trip_byte_faithfully`）。
 
 **Non-Goals（本 codec 不負責）：** IndexedDB 實體 store（`work_key` 只給 key-derivation 邏輯，binding.rs:6-8）、消費端 plugin/query（屬 `plugin-protocol`/`query-model`，非 fcb codec）。
 

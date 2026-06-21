@@ -175,23 +175,19 @@ FCB 文件刻意拆成「給人讀的導讀」與「給機器解析的精確規�
 
 誠實列出**尚未實作／尚未凍結**的部分，以免高估現況：
 
-1. **`fcb.netflow.v1` / `fcb.json.v1` 尚無記錄 schema。** 兩者列在 `BUILTIN_STREAM_TYPES`（表示「有內建
-   handler 的位置」），但 spec 與 crate 都**未定義**其 record schema；目前只有 `fcb.syslog.v1` 有凍結
-   schema。佐證：`crates/fcb/src/evidence.rs` 的 `BUILTIN_STREAM_TYPES`、`fcb-data-model.md §3.2`。
-2. **WASM 綁定僅 `fcb_version`。** `crates/fcb/src/wasm.rs` 只導出 `fcb_version()`，尚無
+1. **WASM 綁定僅 `fcb_version`。** `crates/fcb/src/wasm.rs` 只導出 `fcb_version()`，尚無
    `openBundle`／`packSubmission` 等 richer bindings（註：`fcb-wasm` bridge crate 已有較完整的
    native core，見 `crates/fcb-wasm/src/lib.rs`）。
-3. **plugin registry 是消費端概念、本 crate 未實作。** `DecodedStream` 的註解提到未知 type 會落
+2. **plugin registry 是消費端概念、本 crate 未實作。** `DecodedStream` 的註解提到未知 type 會落
    generic fallback「或交給 a registered plugin」（`crates/fcb/src/evidence.rs:50`），但 crate 內**沒有
    任何 registry 程式碼**；plugin 介面屬 `plugin-protocol`（消費端 spec），與 `.case` 位元組格式無關。
-4. **payload 多出 manifest 未列的 stream，行為未測。** `decode_streams` 以 manifest 驅動迭代、用 `id`
+3. **payload 多出 manifest 未列的 stream，行為未測。** `decode_streams` 以 manifest 驅動迭代、用 `id`
    反查 payload；manifest 缺對應 payload → `Malformed`，但**反向**（payload 有 manifest 未宣告的多餘
    stream）會被靜默忽略，且**無任何測試斷言**這是刻意行為（`crates/fcb/src/evidence.rs:77-93`，未證實）。
    重寫 codec／自訂 case builder 時別依賴這個未凍結的行為。
 
-> ✅ 已關閉（本批）：**`pack_case` / `CasePayload` 公開 helper**、**canonical `bundle_hash` 凍結**——
-> 見上方「`.case` 產出」段與 `fcb::case` 模組。
+> ✅ 已關閉（本批）：**`pack_case` / `CasePayload` 公開 helper**、**canonical `bundle_hash` 凍結**、
+> **`fcb.netflow.v1` / `fcb.json.v1` 記錄 schema 凍結**——見上方「`.case` 產出」段、`fcb::case` 模組與
+> `fcb-data-model.md §3.2/§3.3`。
 >
-> `fcb-reference.md §9` 是最細的缺口清單（共 4 項）；本表已與其對齊。第 1 項建議「**回頭在 `fcb`
-> crate 定 schema**」，而非只在消費端自幹——這樣 browser workbench、case builder、教師審閱平台三方
-> 共用同一份真實程式碼，從根本杜絕格式漂移。
+> `fcb-reference.md §9` 是最細的缺口清單（共 3 項）；本表已與其對齊。
