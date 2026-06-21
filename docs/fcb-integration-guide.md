@@ -164,6 +164,7 @@ wasm-pack build crates/fcb-wasm --target web       # 瀏覽器 ESM
 | `openCase(bytes, passphrase)` | 解密 `.case`、回 `{ case_id, bundle_hash, task, streams }`。 |
 | `openSubmission(bytes, passphrase)` | 解密 `.casework`、回 `Submission`。 |
 | `packSubmission(submission, passphrase)` | 把 `Submission` 封成 `.casework` bytes。 |
+| `packCase(caseObject, passphrase)` | 把一個 case 物件封成 sealed `.case` bundle bytes。 |
 | `computeBundleHash(bytes)` | `sha256:<hex>` 內容雜湊。 |
 | `verifyBinding(workCaseId, workBundleHash, caseId, caseBundleHash)` | 回 `"match"` / `"case-mismatch"` / `"evidence-version-mismatch"`。 |
 | `workKey(caseId)` | 本地儲存分割鍵 `fcb:work:<caseId>`。 |
@@ -189,6 +190,15 @@ export async function openCase(bytes, passphrase) {
 export function peek(bytes) {
   return fcb.peekHeader(bytes);   // 不需密碼，失敗才丟（bad-magic / malformed）
 }
+
+export function packCase(caseObject, passphrase) {
+  try {
+    return { ok: true, value: fcb.packCase(caseObject, passphrase) };
+  } catch (e) {
+    // 空 manifest 之類的結構問題會回 kind "malformed"（見 §3）。
+    return { ok: false, kind: e.kind ?? "unknown", message: String(e.message ?? e) };
+  }
+}
 ```
 
 接著照 error kind 分流出能直接給使用者看的訊息。這裡要小心：`wrong-passphrase` 是請使用者重輸密碼，`corrupt` 是直接拒收，兩者**不能混為一談**：
@@ -209,6 +219,34 @@ export function openCaseUx(bytes, passphrase) {
   }
 }
 ```
+
+### 2.4 用 `packCase` 在瀏覽器出題
+
+`packCase` 把一個 JS case 物件封成 sealed `.case` bytes，底層走的就是 native `pack_case` 的同一條路（canonical `bundle_hash`、隨機 salt/nonce、預設 Argon2id cost），所以**只要物件形狀對，JS 出的 `.case` 其 canonical payload 與 `bundle_hash` 會和 native producer 完全一致**（sealed bytes 本身因每次隨機 salt/nonce 而不同，要驗證一致性請比對 `bundle_hash`，而不是逐位元比 sealed bytes）。物件形狀如下：
+
+```js
+const caseObject = {
+  case_id: "acme-ir-2026-03",
+  manifest: [
+    { id: "s0", type: "fcb.syslog.v1", records: 1 },   // 鍵是 `type`，不是 `stream_type`
+  ],
+  task: {
+    report_mode: "steps",                               // 小寫字串："steps" / "freeform"
+    instructions: "Investigate the host.",
+    steps: [{ id: "q1", prompt: "source IP?", answer_type: "ip" }],
+  },
+  payload: {
+    streams: [{ id: "s0", records: [ /* 可被 CBOR 編碼的值 */ ] }],
+  },
+};
+
+const caseBytes = fcb.packCase(caseObject, "passphrase");   // Uint8Array，可寫成 .case 檔
+```
+
+兩個 footgun，踩到都不會報錯、只會讓 `bundle_hash` 和 native producer 對不上：
+
+- **Footgun 1：manifest 每筆用鍵 `type`，不是 `stream_type`。** wire 與 JS 物件裡這個欄位都叫 `type`（Rust 端才是 `StreamManifest.stream_type`）。寫成 `stream_type` 會被當成缺 `type`，反序列化就壞。
+- **Footgun 2：整數 record 值必須落在 JS safe-integer 範圍內。** record 裡的整數若超過 `2^53-1`（`Number.MAX_SAFE_INTEGER`），用普通 JS number 傳會**靜默**退化成 float，canonical CBOR 因此不同，算出來的 `bundle_hash` 就會和 native-authored case 不一致。超過範圍的整數**務必**以 `BigInt` 傳入（例如 `9007199254784000n`）；safe range 內的整數照常用 number 即可。
 
 ---
 
