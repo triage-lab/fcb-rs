@@ -288,6 +288,13 @@ mod tests {
     }
 
     #[test]
+    fn reader_version_is_two_for_aad_format() {
+        // The AAD-authenticated format is reader version 2. Guards against an
+        // accidental downgrade that would silently change the min_reader gate.
+        assert_eq!(READER_VERSION, 2);
+    }
+
+    #[test]
     fn min_reader_too_new_is_unsupported() {
         let header = sample_header(READER_VERSION + 1);
         let bytes = write_container(BundleKind::Case, &header, b"x").unwrap();

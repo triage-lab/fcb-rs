@@ -363,6 +363,34 @@ fn prefix_tamper_matrix_is_rejected() {
         );
     }
 
+    // (e)-(g) Flip a byte inside the header meta — the embedded task prompt, a
+    // manifest stream_type, and the bundle_hash header field. The spec's
+    // "Header field tamper detected" scenario names the task prompt inside the
+    // meta object by example; each must fail as Corrupt because the whole
+    // prefix (header included) is bound as AAD.
+    for needle in [
+        &b"source IP?"[..],
+        &b"fcb.syslog.v1"[..],
+        &b"sha256:deadbeef"[..],
+    ] {
+        let mut b = base.clone();
+        let pos = b
+            .windows(needle.len())
+            .position(|w| w == needle)
+            .unwrap_or_else(|| {
+                panic!(
+                    "{} appears in the plaintext header meta",
+                    std::str::from_utf8(needle).unwrap()
+                )
+            });
+        b[pos] ^= 0x01;
+        assert_eq!(
+            bundle::open_bytes(&b, PASS).unwrap_err(),
+            fcb::FcbError::Corrupt,
+            "tampering a header meta byte must fail as Corrupt"
+        );
+    }
+
     // The untampered frozen case still opens cleanly.
     assert!(bundle::open_bytes(&base, PASS).is_ok());
 }
