@@ -759,7 +759,7 @@ seal 的 AAD。salt/nonce 每次 `pack_bytes` 都用 `getrandom` 重新產生。
 | Variant | `#[error]` 文字 | 語意 | 觸發點（摘） | sourceRef |
 |---------|-----------------|------|--------------|-----------|
 | `BadMagic` | `"not an FCB container (bad magic)"` | 前 4 bytes 非 FCB magic | `peek/read_container` 入口 | error.rs:11-12；container.rs:153, 182 |
-| `UnsupportedVersion { min_reader, supported }` | `"unsupported FCB version: …"` | bundle 要求的 reader 比本 reader 新 | `min_reader > READER_VERSION(=1)` | error.rs:14-16；container.rs:169-173 |
+| `UnsupportedVersion { min_reader, supported }` | `"unsupported FCB version: …"` | bundle 要求的 reader 比本 reader 新 | `min_reader > READER_VERSION(=2)` | error.rs:14-16；container.rs:169-173 |
 | `Malformed(String)` | `"malformed FCB container: {0}"` | 結構性無效 | 壞長度前綴、未知/缺 KIND、header 越界、壞 header CBOR、未知 KDF algo、nonce 長度錯、`payload missing stream {id}` 等 | error.rs:19-20；container/crypto/evidence 多處 |
 | `WrongPassphrase` | `"wrong passphrase"` | KCV 不符（錯密碼） | `crypto.rs:89-91` | error.rs:23-24 |
 | `Corrupt` | `"corrupt or tampered bundle"` | KCV 符但 AEAD/zstd 失敗（竄改）；或 payload 層 `cbor::decode` 失敗 | crypto.rs:74-78；compress.rs:35-37；cbor.rs:38-40 | error.rs:27-28 |
