@@ -19,7 +19,7 @@
 
 ### Modified Capabilities
 
-- `fcb-wasm-bridge`: 新增「Case Authoring (Pack Case)」requirement——bridge 對外多一個 packCase 操作，並規範 JS-authored case 與 native producer 的 byte-stable／bundle_hash 等價契約，以及空 manifest 的錯誤對應。
+- `fcb-wasm-bridge`: 新增「Case Authoring (Pack Case)」requirement——bridge 對外多一個 packCase 操作，並規範 JS-authored case 與 native producer 的 canonical payload／bundle_hash 等價契約（sealed bytes 因隨機 salt/nonce 而異），以及空 manifest 的錯誤對應。
 - `user-integration-guide`: 補上 packCase 的 JS 物件形狀說明與兩個 caveat（type 鍵、safe-integer 整數）。
 
 ## Impact

@@ -222,7 +222,7 @@ export function openCaseUx(bytes, passphrase) {
 
 ### 2.4 用 `packCase` 在瀏覽器出題
 
-`packCase` 把一個 JS case 物件封成 sealed `.case` bytes，底層走的就是 native `pack_case` 的同一條路（canonical `bundle_hash`、隨機 salt/nonce、預設 Argon2id cost），所以**只要物件形狀對，JS 出的 `.case` 會和 native producer byte-identical**。物件形狀如下：
+`packCase` 把一個 JS case 物件封成 sealed `.case` bytes，底層走的就是 native `pack_case` 的同一條路（canonical `bundle_hash`、隨機 salt/nonce、預設 Argon2id cost），所以**只要物件形狀對，JS 出的 `.case` 其 canonical payload 與 `bundle_hash` 會和 native producer 完全一致**（sealed bytes 本身因每次隨機 salt/nonce 而不同，要驗證一致性請比對 `bundle_hash`，而不是逐位元比 sealed bytes）。物件形狀如下：
 
 ```js
 const caseObject = {

@@ -8,7 +8,7 @@ fcb-wasm 是 FCB codec 的 WASM／JS bridge，分兩層：crate root 的 native-
 
 **Goals:**
 
-- 對外提供 packCase，沿用 packSubmission 的兩層 pattern，讓 JS-authored case 與 native producer byte-identical（bundle_hash 一致、零 FROZEN_* 漂移）。
+- 對外提供 packCase，沿用 packSubmission 的兩層 pattern，讓 JS-authored case 的 canonical payload 與 bundle_hash 和 native producer 一致（sealed bytes 因每次隨機 salt/nonce 而不同；零 FROZEN_* 漂移）。
 - 以可在 cargo test 執行的 native wrapper 承載邏輯，並用跨 JS 邊界的 wasm 測試守住數值決定性。
 - 文件化 JS 物件形狀與 footgun。
 
