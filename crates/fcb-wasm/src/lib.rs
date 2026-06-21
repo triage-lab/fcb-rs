@@ -1,7 +1,7 @@
 //! WASM / JS bindings for the FCB codec.
 //!
 //! The browser workbench (and any other JS consumer) only sees the thin
-//! `#[wasm_bindgen]` surface in [`wasm_api`]; everything below it is the already
+//! `#[wasm_bindgen]` surface in the wasm-only `wasm_api` module; everything below it is the already
 //! byte-stable `fcb` codec. The bridge is split into a **native-testable core**
 //! (this module) that returns plain Rust values, and a wasm-only marshaling
 //! layer that serializes those values to JS via `serde-wasm-bindgen` and maps

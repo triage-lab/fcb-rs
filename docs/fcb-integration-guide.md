@@ -13,7 +13,8 @@
 >
 > - **明文 header 未被 AEAD 認證。** container 的 header（含 `case_id`、`bundle_hash`、manifest、task）是**明文、未簽章**——只有 payload 經 AEAD 驗證。任何能產檔的人都能在 header 填任意值。因此**收件端的 binding 檢查是必要的、不是選用的**（§1.6 / §5）；要信任的是「**解密後 payload** 裡的值」與「對 payload 重算的 canonical `bundle_hash`」，不是 header 上的字串。
 > - **每次封裝都產新的隨機 salt/nonce。** `pack_case` / `pack_submission` 內部各自產生 fresh salt（16 B）與 nonce（24 B）。**不要跨 bundle 快取或重用 key／nonce**——這份隨機性就是安全邊界。
-> - **passphrase 是使用者輸入的字串。** 任意 UTF-8 皆可，codec **不強制**長度或強度（由 Argon2id 拖慢暴力破解，但弱密碼仍可被猜）。請在 UI 引導使用者選足夠熵的密碼。`.case` 與 `.casework` 的密碼**彼此獨立**。
+> - **passphrase 是使用者輸入的字串。** 任意 UTF-8 皆可，codec **不強制**長度或強度（由 Argon2id 拖慢暴力破解，但弱密碼仍可被猜）。請在 UI 引導使用者選足夠熵的密碼（互動解鎖建議 ≥128 bit 熵）。`.case` 與 `.casework` 的密碼**彼此獨立**。
+> - **密碼不會被自動清零。** API 收 `&str`，Rust **不會**在用完後自動把密碼位元組從記憶體抹除。對長駐的生產工具（CLI／服務），建議用 [`zeroize`](https://docs.rs/zeroize/) 之類型別包住輸入、用完即清。
 
 ---
 
