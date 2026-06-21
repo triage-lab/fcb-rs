@@ -69,7 +69,7 @@ assert_eq!(header.case_id, "demo");
 wasm-pack build crates/fcb-wasm --target web      # 或 --target nodejs / bundler
 ```
 
-build 完的 `pkg/` 會把這幾支匯出去：`peekHeader(bytes)`、`openCase(bytes, passphrase)`、`openSubmission(bytes, passphrase)`、`packSubmission(submission, passphrase)`、`computeBundleHash(bytes)`、`verifyBinding(...)` 還有 `workKey(caseId)`。出錯時它不會只丟個含糊的錯誤，而是回一個你認得出來的 error kind——`bad-magic`、`wrong-passphrase`、`corrupt` 之類的。整合上的細節都在 [`crates/fcb-wasm/src/lib.rs`](./crates/fcb-wasm/src/lib.rs)。
+build 完的 `pkg/` 會把這幾支匯出去：`peekHeader(bytes)`、`openCase(bytes, passphrase)`、`openSubmission(bytes, passphrase)`、`packSubmission(submission, passphrase)`、`packCase(caseObject, passphrase)`、`computeBundleHash(bytes)`、`verifyBinding(...)` 還有 `workKey(caseId)`。出錯時它不會只丟個含糊的錯誤，而是回一個你認得出來的 error kind——`bad-magic`、`wrong-passphrase`、`corrupt` 之類的。整合上的細節都在 [`crates/fcb-wasm/src/lib.rs`](./crates/fcb-wasm/src/lib.rs)。
 
 ## Build / Test
 

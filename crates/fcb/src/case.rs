@@ -48,7 +48,7 @@ pub fn case_bundle_hash(payload: &CasePayload) -> Result<String> {
 /// namespaced `type` and record count (which [`StreamData`] does not carry);
 /// the payload carries the records. The optional task embeds the answer-free
 /// assignment in the plaintext header.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaseInput {
     pub case_id: String,
     pub manifest: Vec<StreamManifest>,

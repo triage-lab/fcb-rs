@@ -14,7 +14,7 @@ use serde::Serialize;
 
 use fcb::binding::{self, BindingCheck};
 use fcb::bundle::open_bytes;
-use fcb::case::CasePayload;
+use fcb::case::{pack_case as fcb_pack_case, CaseInput, CasePayload};
 use fcb::container::{peek_header, BundleKind};
 use fcb::error::FcbError;
 use fcb::evidence;
@@ -185,6 +185,11 @@ pub fn pack_work(work: &Submission, passphrase: &str) -> Result<Vec<u8>, FcbErro
     submission::pack_submission(work, passphrase)
 }
 
+/// Pack an evidence case into a sealed `.case` bundle (mirror of `pack_work`).
+pub fn pack_case(input: &CaseInput, passphrase: &str) -> Result<Vec<u8>, FcbError> {
+    fcb_pack_case(input, passphrase)
+}
+
 /// `sha256:<hex>` content hash over the supplied bytes.
 pub fn bundle_hash(bytes: &[u8]) -> String {
     binding::compute_bundle_hash(bytes)
@@ -220,6 +225,7 @@ mod wasm_api {
 
     use fcb::error::FcbError;
     use fcb::submission::Submission;
+    use fcb::case::CaseInput;
 
     /// Serialize a value to a JS object (maps become plain objects, not `Map`).
     fn to_js(v: &impl serde::Serialize) -> Result<JsValue, JsValue> {
@@ -266,6 +272,14 @@ mod wasm_api {
         let work: Submission = serde_wasm_bindgen::from_value(submission)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
         crate::pack_work(&work, passphrase).map_err(to_js_error)
+    }
+
+    /// Pack a case (a JS object) into a sealed `.case` bundle.
+    #[wasm_bindgen(js_name = packCase)]
+    pub fn pack_case(input: JsValue, passphrase: &str) -> Result<Vec<u8>, JsValue> {
+        let case_input: CaseInput = serde_wasm_bindgen::from_value(input)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        crate::pack_case(&case_input, passphrase).map_err(to_js_error)
     }
 
     /// `sha256:<hex>` over the supplied bytes.
@@ -382,6 +396,42 @@ mod tests {
         }
     }
 
+    fn sample_case_input() -> CaseInput {
+        CaseInput {
+            case_id: "acme-ir-2026-03".into(),
+            manifest: vec![StreamManifest {
+                id: "s0".into(),
+                stream_type: "fcb.syslog.v1".into(),
+                records: 1,
+            }],
+            task: Some(sample_task()),
+            payload: CasePayload {
+                streams: vec![StreamData {
+                    id: "s0".into(),
+                    records: vec![syslog_record()],
+                }],
+            },
+        }
+    }
+
+    #[test]
+    fn case_round_trips_through_bridge() {
+        let input = sample_case_input();
+        let bytes = pack_case(&input, PASS).unwrap();
+        let view = open_case(&bytes, PASS).unwrap();
+        assert_eq!(view.case_id, "acme-ir-2026-03");
+        assert_eq!(view.streams.len(), 1);
+        assert_eq!(view.streams[0].stream_type, "fcb.syslog.v1");
+        // Byte-faithful records, including the syslog `raw` field.
+        assert_eq!(view.streams[0].records, vec![syslog_record()]);
+        assert_eq!(view.task.unwrap().report_mode, ReportMode::Steps);
+        // Canonical, deterministic content hash — equals hashing the payload directly.
+        assert_eq!(
+            view.bundle_hash,
+            fcb::case::case_bundle_hash(&input.payload).unwrap()
+        );
+    }
+
     #[test]
     fn error_kind_matches_spec_table() {
         assert_eq!(error_kind(&FcbError::BadMagic), "bad-magic");
@@ -475,5 +525,48 @@ mod tests {
             "evidence-version-mismatch"
         );
         assert_ne!(work_key("c1"), work_key("c2"));
+    }
+}
+
+#[cfg(all(test, target_arch = "wasm32"))]
+mod wasm_tests {
+    use wasm_bindgen::JsValue;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    const PASS: &str = "lab-pass";
+    // Mirrors crates/fcb/tests/vectors.rs FROZEN_CASE_BUNDLE_HASH: the canonical
+    // hash of the fixed case payload (s0: ["evt1","evt2"], s1: [7]). Independent
+    // of the random salt/nonce a sealed bundle uses.
+    const FROZEN_CASE_BUNDLE_HASH: &str =
+        "sha256:376d586b42b0e800a6e78fea8bfb9a68cb569d033cc324b7b9b1800fc508eccf";
+
+    // A JS-authored case crosses the real serde-wasm-bindgen boundary: the
+    // integer `7` is a plain JS number. If it deserialized to a CBOR float
+    // instead of an integer, the canonical payload — and this hash — would differ.
+    #[wasm_bindgen_test]
+    fn js_authored_case_hashes_identically_to_native() {
+        let case = js_sys::JSON::parse(
+            r#"{
+                "case_id": "acme-ir-2026-03",
+                "manifest": [
+                    { "id": "s0", "type": "fcb.syslog.v1", "records": 2 },
+                    { "id": "s1", "type": "fcb.syslog.v1", "records": 1 }
+                ],
+                "payload": { "streams": [
+                    { "id": "s0", "records": ["evt1", "evt2"] },
+                    { "id": "s1", "records": [7] }
+                ] }
+            }"#,
+        )
+        .unwrap();
+
+        let bytes = crate::wasm_api::pack_case(case, PASS).unwrap();
+        // peekHeader reads bundle_hash from the plaintext header — no decode needed.
+        let info = crate::wasm_api::peek_header(&bytes).unwrap();
+        let bundle_hash = js_sys::Reflect::get(&info, &JsValue::from_str("bundle_hash"))
+            .unwrap()
+            .as_string()
+            .unwrap();
+        assert_eq!(bundle_hash, FROZEN_CASE_BUNDLE_HASH);
     }
 }
