@@ -191,7 +191,7 @@ tests:
 ---
 ### Requirement: Passphrase-based cryptography
 
-The key SHALL be derived from the passphrase using Argon2id with the salt and parameters stored in the header. The payload SHALL be sealed with an AEAD (XChaCha20-Poly1305) that provides both confidentiality and integrity. A wrong passphrase and a tampered ciphertext SHALL each cause a distinct, non-silent failure rather than yielding partially-decoded data.
+The key SHALL be derived from the passphrase using Argon2id with the salt and parameters stored in the header. The payload SHALL be sealed with an AEAD (XChaCha20-Poly1305) that provides both confidentiality and integrity, and the entire plaintext header together with its framing prefix (magic, KIND, container_version, hdr_len) SHALL be bound as the AEAD additional authenticated data (AAD). A wrong passphrase, a tampered ciphertext, and a tampered header SHALL each cause a distinct, non-silent failure rather than yielding partially-decoded data.
 
 #### Scenario: Wrong passphrase
 
@@ -203,34 +203,46 @@ The key SHALL be derived from the passphrase using Argon2id with the salt and pa
 - **WHEN** any byte of the encrypted payload is modified
 - **THEN** AEAD verification SHALL fail and the reader SHALL return a Corrupt error
 
-<!-- @trace
-source: fcb-protocols
-updated: 2026-06-20
-code:
-  - crates/fcb/src/error.rs
-  - tsconfig.json
-  - vitest.config.ts
-  - crates/fcb/src/bundle.rs
-  - crates/fcb/src/compress.rs
-  - crates/fcb/src/container.rs
-  - crates/fcb/src/crypto.rs
-  - package.json
-  - crates/fcb/src/binding.rs
-  - src/contracts/index.ts
-  - src/contracts/plugin.ts
-  - crates/fcb/src/task.rs
-  - src/contracts/evidence.ts
-  - crates/fcb/src/lib.rs
-  - crates/fcb/src/wasm.rs
-  - crates/fcb/src/cbor.rs
-  - crates/fcb/src/evidence.rs
-  - src/contracts/query.ts
-  - Cargo.toml
-  - crates/fcb/src/submission.rs
-  - pnpm-workspace.yaml
-  - crates/fcb/Cargo.toml
-tests:
-  - crates/fcb/tests/vectors.rs
-  - src/contracts/plugin.test.ts
-  - src/contracts/query.test.ts
--->
+#### Scenario: Tampered header
+
+- **WHEN** any byte of the plaintext header or its framing prefix (magic, KIND, container_version, hdr_len) is modified
+- **THEN** AEAD verification SHALL fail and the reader SHALL return a Corrupt error
+
+---
+### Requirement: Authenticated plaintext header
+
+The plaintext header SHALL be cryptographically authenticated by binding its bytes — together with the framing prefix that precedes it (the magic, KIND, container_version, and hdr_len) — as the AEAD additional authenticated data (AAD) used to seal the payload. A reader SHALL reconstruct the identical AAD from the bytes it reads before decryption, so that any modification to a header field (including case_id, bundle_hash, KDF parameters, AEAD nonce, key_check, or the meta object carrying the stream manifest and task spec) or to the framing prefix causes AEAD verification to fail. The header SHALL remain readable without the passphrase.
+
+The AAD SHALL be exactly the contiguous on-disk bytes that precede the encrypted payload, taken verbatim as read and NOT re-serialized: the 4-byte magic, the 1-byte KIND, the 2-byte little-endian container_version, the 4-byte little-endian hdr_len, and the hdr_len-byte CBOR header — that is, the byte range from offset 0 up to (but excluding) the first ciphertext byte, whose length equals `11 + hdr_len`. A reader SHALL authenticate these literal prefix bytes rather than a re-encoding of the parsed header, so a bundle whose header is non-canonical CBOR still authenticates against its own on-disk bytes.
+
+#### Scenario: Header authenticated without breaking passphrase-free read
+
+- **WHEN** a reader opens a bundle before supplying a passphrase
+- **THEN** it SHALL still read the plaintext header fields
+- **AND** when the passphrase is later supplied, decryption SHALL verify the header bytes as AAD
+
+##### Example: AAD byte range for a bundle whose hdr_len is 476
+
+- **GIVEN** a bundle whose hdr_len field holds 476 (little-endian `dc 01 00 00`)
+- **WHEN** the reader binds the AAD
+- **THEN** the AAD is the byte range `[0, 487)` — magic `[0,4)`, KIND `[4,5)`, container_version `[5,7)`, hdr_len `[7,11)`, header CBOR `[11,487)` — and the ciphertext begins at offset 487 (`11 + 476`)
+
+#### Scenario: Header field tamper detected
+
+- **WHEN** an attacker modifies any header field (for example the task prompt inside the meta object) without knowing the passphrase
+- **THEN** a subsequent open with the correct passphrase SHALL fail with a Corrupt error and SHALL NOT return any decoded data
+
+---
+### Requirement: Verified content address on case open
+
+When opening a case bundle, a reader SHALL recompute the bundle_hash from the decrypted canonical payload and SHALL compare it to the bundle_hash declared in the header; a mismatch SHALL fail with a Corrupt error. This verification SHALL apply to case bundles only — a submission bundle's header bundle_hash is a binding reference to its case, not the hash of the submission payload, and SHALL NOT be recomputed from the submission payload.
+
+#### Scenario: Case declared hash matches payload
+
+- **WHEN** a reader opens a valid case bundle with the correct passphrase
+- **THEN** the recomputed bundle_hash SHALL equal the header bundle_hash and the open SHALL succeed
+
+#### Scenario: Case declared hash does not match payload
+
+- **WHEN** a case bundle's header declares a bundle_hash that does not equal the hash of its canonical payload
+- **THEN** the reader SHALL fail with a Corrupt error and SHALL NOT return any decoded data
