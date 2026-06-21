@@ -2,3 +2,4 @@
 Cargo.lock.bak
 .spectra/
 openspec/.vector-search.db*
+.understand-anything/
