@@ -17,4 +17,4 @@
 
 ## 5. 文件一致性與語言標準
 
-- [ ] 5.1 確認所有改動遵守 doc-language-standard（台灣慣用語、技術名詞保留英文、hard-constraint tokens 不被改動），且 root README.md 與 docs/README.md 索引的 cross-link 無 dead link。驗證：全部改動段落經 humane-prose-audit PASS（0 Critical／0 High）、ai-slop-auditor AI-likelihood 落到 low，且 cross-link 檢查通過。
+- [x] 5.1 確認所有改動遵守 doc-language-standard（台灣慣用語、技術名詞保留英文、hard-constraint tokens 不被改動），且 root README.md 與 docs/README.md 索引的 cross-link 無 dead link。驗證：全部改動段落經 humane-prose-audit PASS（0 Critical／0 High）、ai-slop-auditor AI-likelihood 落到 low，且 cross-link 檢查通過。
