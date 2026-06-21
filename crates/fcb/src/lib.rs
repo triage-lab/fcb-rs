@@ -11,6 +11,7 @@
 
 pub mod binding;
 pub mod bundle;
+pub mod case;
 pub mod cbor;
 pub mod compress;
 pub mod container;

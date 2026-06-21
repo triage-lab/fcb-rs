@@ -261,8 +261,14 @@ mod tests {
 
     #[test]
     fn non_fcb_prefix_is_bad_magic() {
-        assert_eq!(read_container(b"\x00ELF not fcb").unwrap_err(), FcbError::BadMagic);
-        assert_eq!(read_container(b"PK\x03\x04zip").unwrap_err(), FcbError::BadMagic);
+        assert_eq!(
+            read_container(b"\x00ELF not fcb").unwrap_err(),
+            FcbError::BadMagic
+        );
+        assert_eq!(
+            read_container(b"PK\x03\x04zip").unwrap_err(),
+            FcbError::BadMagic
+        );
         assert_eq!(read_container(b"ab").unwrap_err(), FcbError::BadMagic);
     }
 
@@ -295,6 +301,9 @@ mod tests {
         let header = sample_header(1);
         let mut bytes = write_container(BundleKind::Case, &header, b"x").unwrap();
         bytes.truncate(9); // keep magic+kind+ver+partial hdr_len region
-        assert!(matches!(read_container(&bytes), Err(FcbError::Malformed(_))));
+        assert!(matches!(
+            read_container(&bytes),
+            Err(FcbError::Malformed(_))
+        ));
     }
 }

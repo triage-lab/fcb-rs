@@ -74,7 +74,10 @@ pub fn manifest_from_meta(meta: &Value) -> Result<Vec<StreamManifest>> {
 /// Join the manifest (types) with payload records (by `id`). Unknown types are
 /// returned, never rejected; a manifest entry with no payload stream is a
 /// structural error.
-pub fn decode_streams(manifest: &[StreamManifest], payload: &[StreamData]) -> Result<Vec<DecodedStream>> {
+pub fn decode_streams(
+    manifest: &[StreamManifest],
+    payload: &[StreamData],
+) -> Result<Vec<DecodedStream>> {
     manifest
         .iter()
         .map(|m| {
@@ -102,8 +105,16 @@ mod tests {
 
     fn mixed_manifest() -> Vec<StreamManifest> {
         vec![
-            StreamManifest { id: "s0".into(), stream_type: "fcb.syslog.v1".into(), records: 2 },
-            StreamManifest { id: "s1".into(), stream_type: "acme.edr.v1".into(), records: 1 },
+            StreamManifest {
+                id: "s0".into(),
+                stream_type: "fcb.syslog.v1".into(),
+                records: 2,
+            },
+            StreamManifest {
+                id: "s1".into(),
+                stream_type: "acme.edr.v1".into(),
+                records: 1,
+            },
         ]
     }
 
@@ -119,8 +130,14 @@ mod tests {
     fn builtin_and_third_party_types_both_listed() {
         let manifest = mixed_manifest();
         let payload = vec![
-            StreamData { id: "s0".into(), records: vec![rec(1), rec(2)] },
-            StreamData { id: "s1".into(), records: vec![rec(9)] },
+            StreamData {
+                id: "s0".into(),
+                records: vec![rec(1), rec(2)],
+            },
+            StreamData {
+                id: "s1".into(),
+                records: vec![rec(9)],
+            },
         ];
         let decoded = decode_streams(&manifest, &payload).unwrap();
         assert_eq!(decoded.len(), 2);
@@ -136,14 +153,35 @@ mod tests {
     fn unknown_type_does_not_abort_other_streams() {
         // An unknown type sits between two known ones; all must still decode.
         let manifest = vec![
-            StreamManifest { id: "a".into(), stream_type: "fcb.syslog.v1".into(), records: 1 },
-            StreamManifest { id: "b".into(), stream_type: "vendor.unknown.v3".into(), records: 1 },
-            StreamManifest { id: "c".into(), stream_type: "fcb.json.v1".into(), records: 1 },
+            StreamManifest {
+                id: "a".into(),
+                stream_type: "fcb.syslog.v1".into(),
+                records: 1,
+            },
+            StreamManifest {
+                id: "b".into(),
+                stream_type: "vendor.unknown.v3".into(),
+                records: 1,
+            },
+            StreamManifest {
+                id: "c".into(),
+                stream_type: "fcb.json.v1".into(),
+                records: 1,
+            },
         ];
         let payload = vec![
-            StreamData { id: "a".into(), records: vec![rec(1)] },
-            StreamData { id: "b".into(), records: vec![rec(2)] },
-            StreamData { id: "c".into(), records: vec![rec(3)] },
+            StreamData {
+                id: "a".into(),
+                records: vec![rec(1)],
+            },
+            StreamData {
+                id: "b".into(),
+                records: vec![rec(2)],
+            },
+            StreamData {
+                id: "c".into(),
+                records: vec![rec(3)],
+            },
         ];
         let decoded = decode_streams(&manifest, &payload).unwrap();
         assert_eq!(decoded.len(), 3);

@@ -570,9 +570,11 @@ key（作品隔離，`binding.rs:90-94`）。實體 IndexedDB store 屬消費端
 如此同一份證物的 hash 穩定，學生作品才能可靠綁回特定證物版本；證物一改版，舊作品開啟時即可用
 `EvidenceVersionMismatch` 提示。
 
-> ⚠️ 此「`bundle_hash` 應等於明文 payload bytes 的 hash」是**慣例、未在程式碼強制**：`compute_bundle_hash`
-> 接受任意 bytes，`binding.rs`／`submission.rs` 不會重算或驗證它對得上 payload。golden vector 用假值
-> `"sha256:deadbeef"`（`vectors.rs:63, 99`）。正規定義尚未凍結，見 §14。
+> ℹ️ canonical 定義「`bundle_hash` = 明文 payload bytes 的 hash」已由 `fcb::case::case_bundle_hash` 落實、
+> 由 `pack_case` 自動帶入 header（§13）。低階 `compute_bundle_hash` 仍接受任意 bytes，`binding.rs`／
+> `submission.rs` 不會重算或驗證它對得上 payload（codec 層不強制涵蓋範圍）；golden vector 的 header 仍用
+> 假值 `"sha256:deadbeef"`（`vectors.rs`）。canonical hash 的凍結見 §14 的「已關閉」註與
+> `case_canonical_bundle_hash_is_frozen`。
 
 ---
 
@@ -688,7 +690,9 @@ open：   ciphertext --(AEAD open，先 KCV 檢查)--> zstd frame --(zstd decomp
 
 ## 13. 端到端打包流程（end-to-end，可照做）
 
-以 `.case` 為例，case builder 從零組一份 bundle 的步驟（目前須手組信封，因無 `pack_case` helper，§14）：
+以 `.case` 為例。**Rust 呼叫端最簡路徑是 `fcb::case::pack_case(&CaseInput, passphrase)`**——一步組
+`{streams}` 信封、以 canonical 序列化算出 `bundle_hash`、組 `{streams, task?}` meta 並封裝。下面拆解其
+底層步驟，供理解格式與非 Rust 重實作參考：
 
 1. **整理 manifest**：對每條 stream 建 `StreamManifest { id, type, records }`（記得 CBOR key 是 `"type"`）。
 2. **整理 task**（可選）：建 `TaskSpec { report_mode, instructions, steps }`，**不含任何答案欄位**（§8）。
@@ -696,9 +700,10 @@ open：   ciphertext --(AEAD open，先 KCV 檢查)--> zstd frame --(zstd decomp
    `evidence::manifest_to_meta` 產出 `{streams}`，再合併 `task::task_to_meta` 的 `{task}`，或直接照
    `CaseMeta { streams, task }` 形狀組（注意 library `task_to_meta` 在 `None` 時省略 `task`，§1）。
 4. **組 payload 信封**：`payload = { "streams": [ StreamData { id, records }, ... ] }`，`records` 依各
-   stream type 的 schema（syslog 見 §3.1）。`cbor::encode` 成明文 payload bytes。**此處無 crate helper，
-   須自組**（§14）。
-5. **算 `bundle_hash`**（建議）：`compute_bundle_hash(明文 payload bytes)`（§7），得 `"sha256:…"`。
+   stream type 的 schema（syslog 見 §3.1）。公開型別 `fcb::case::CasePayload { streams }` 即此信封；
+   `CasePayload::to_canonical_bytes()`（= `cbor::encode`）產出明文 payload bytes。
+5. **算 canonical `bundle_hash`**：`case::case_bundle_hash(&CasePayload)` = `compute_bundle_hash(明文
+   payload bytes)`（§7），得 `"sha256:…"`。
 6. **打包**：`BundleParams::new(BundleKind::Case, case_id, bundle_hash, meta)`（用預設 Argon2 cost），
    呼叫 `bundle::pack_bytes(&params, &payload_bytes, passphrase)`。內部會壓縮→加密→組 container frame
    （§9）。
@@ -717,22 +722,21 @@ open：   ciphertext --(AEAD open，先 KCV 檢查)--> zstd frame --(zstd decomp
 
 **已知缺口（Known Gaps）：**
 
-1. **沒有 `.case` payload 信封 helper（`pack_case`）。** crate 有 `StreamData` 與 `decode_streams`（讀），
-   但沒有「組 `{ streams: [...] }` 並 `bundle::pack_bytes`」的 `pack_case`（寫）。`CasePayload` 只存在於兩個
-   test 檔（`vectors.rs:36-39`、`stream_types.rs:18-21`），源碼樹無此型別。建議在 `evidence.rs` 補
-   `CasePayload { streams }` + `pack_case(...)`，讓生產／消費共用同一份序列化。
-2. **沒有 `bundle_hash` 的正規定義 helper。** `compute_bundle_hash` 接受任意 bytes；要固定成「明文 payload
-   bytes」（§7 建議）並包成 helper，避免生產端各算各的。正規定義**尚未凍結**。
-3. **`fcb.netflow.v1` / `fcb.json.v1` 記錄 schema 未定義。** 兩者在 `BUILTIN_STREAM_TYPES` 內、`is_builtin`
+> ✅ **已關閉（本批）：** `.case` payload 信封 helper 與 canonical `bundle_hash` 凍結。公開型別
+> `fcb::case::CasePayload { streams }` 與 `pack_case(&CaseInput, passphrase)` 統一生產／消費序列化；
+> `case::case_bundle_hash` 凍結 canonical `bundle_hash = sha256(明文 payload bytes)`（§13 步驟 4–5）。
+
+1. **`fcb.netflow.v1` / `fcb.json.v1` 記錄 schema 未定義。** 兩者在 `BUILTIN_STREAM_TYPES` 內、`is_builtin`
    回 `true`，但 spec／crate／測試皆未凍結其 record schema（§3.2）。
-4. **WASM 綁定僅 `fcb_version`。** `crates/fcb/src/wasm.rs` 只導出 `fcb_version()`（回 `CARGO_PKG_VERSION`），
-   尚無 `openBundle`／`packSubmission` 等 richer binding（`wasm.rs:6-13`）。
-5. **plugin parser registry 未實作。** `DecodedStream` 的註解提到 `is_builtin = false` 可落到「a registered
+2. **WASM 綁定僅 `fcb_version`。** `crates/fcb/src/wasm.rs` 只導出 `fcb_version()`（回 `CARGO_PKG_VERSION`），
+   尚無 `openBundle`／`packSubmission` 等 richer binding（`wasm.rs:6-13`；註：`fcb-wasm` bridge crate 已有
+   較完整的 native core）。
+3. **plugin parser registry 未實作。** `DecodedStream` 的註解提到 `is_builtin = false` 可落到「a registered
    plugin」（`evidence.rs:50`），但本 crate **沒有**任何 registry 程式碼——plugin registry 純屬消費端概念
    （另見下方 Non-Goals）。
-6. **payload 多餘 stream 的行為無測試斷言。** payload 含 manifest 未列的 stream 會被**靜默忽略**（§2 不變量，
+4. **payload 多餘 stream 的行為無測試斷言。** payload 含 manifest 未列的 stream 會被**靜默忽略**（§2 不變量，
    迭代由 manifest 驅動，`evidence.rs:78-92`），但此行為**沒有專屬測試**——是否刻意如此**未證實**。
-7. **`Submission` 無 byte-stability 凍結。** golden WORK 向量凍結的是 test-local 3 欄 `WorkPayload`，**非**
+5. **`Submission` 無 byte-stability 凍結。** golden WORK 向量凍結的是 test-local 3 欄 `WorkPayload`，**非**
    library 的 7 欄 `Submission`（詳見 §6）；目前無向量釘住 `Submission` 的 on-disk 位元組。
 
 **Non-Goals（本檔／本層不負責）：**
@@ -740,11 +744,12 @@ open：   ciphertext --(AEAD open，先 KCV 檢查)--> zstd frame --(zstd decomp
 - **不**定義 `notes`／`report`／`activity` 的 schema——那是 browser workbench 的範疇（§6 不透明）。
 - **不**定義 plugin parser registry 的執行機制——`is_builtin = false` 的 fallback 是消費端概念，本 crate
   未實作。
-- **不**規定 `bundle_hash` 必須涵蓋哪些 bytes（codec 不驗證，§7／§11）；亦**不**靠 AEAD 保護明文 header。
+- 低階 `compute_bundle_hash` **不**驗證涵蓋範圍（canonical 定義已由 `case::case_bundle_hash` 落實，但
+  primitive 本身不強制，§7／§11）；亦**不**靠 AEAD 保護明文 header。
 - 實體 IndexedDB／儲存層**不**在 binding 範疇（`work_key` 只給 key 字串）。
 
-以上缺口建議「回頭在 `fcb` crate 補 helper + 定 schema」，而非只在 case builder 端自幹——這樣 browser
-端、case builder、教師平台三方共用同一份真實程式碼，從根本杜絕格式漂移。
+剩餘缺口建議「回頭在 `fcb` crate 定 schema」，而非只在消費端自幹——這樣 browser 端、case builder、
+教師平台三方共用同一份真實程式碼，從根本杜絕格式漂移。`.case` 產出已可直接用 `fcb::case::pack_case`。
 
 ---
 

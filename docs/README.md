@@ -111,23 +111,15 @@ FCB 文件刻意拆成「給人讀的導讀」與「給機器解析的精確規�
 
 ### 可直接照抄的最小 `.case` 打包範例（Rust）
 
-> 下面這段濃縮自 `crates/fcb/tests/stream_types.rs:93-120`（會過測試的真實路徑），示範
-> **組 manifest → 出 `{streams}` meta → 自組 `{streams}` payload 信封 → `pack_bytes`** 的完整呼叫序。
-> crate **沒有** `pack_case` helper，所以 payload 側的 `CasePayload { streams }` 信封要自己宣告
-> 並 `cbor::encode`（見「已知缺口」第 1 點）。實務上 m_cost/t_cost/p_cost 走 `BundleParams::new`
-> 預設即可，這裡為了示範才降到測試用低成本。
+> `fcb::case::pack_case` 是 `.case` 的權威產出 helper：給它 manifest、選用 task 與
+> `CasePayload { streams }`，它會以 **canonical 序列化**算出 `bundle_hash`、組
+> `{ streams, task? }` header meta、產生隨機 salt/nonce 並用預設 Argon2id cost 封裝。生產端與
+> 消費端（含 WASM bridge）共用同一個公開 `CasePayload` 信封，從根本杜絕格式漂移。
 >
 > ```rust
 > use ciborium::value::Value;
-> use fcb::bundle::{self, BundleParams};
-> use fcb::container::BundleKind;
-> use fcb::evidence::{manifest_to_meta, StreamData, StreamManifest};
-> use fcb::cbor;
-> use serde::{Deserialize, Serialize};
->
-> // crate 只有「讀」側的 StreamData；payload 信封 { streams: [...] } 要自己宣告。
-> #[derive(Serialize, Deserialize)]
-> struct CasePayload { streams: Vec<StreamData> }
+> use fcb::case::{pack_case, CaseInput, CasePayload};
+> use fcb::evidence::{StreamData, StreamManifest};
 >
 > fn pack_minimal_case() -> Vec<u8> {
 >     // 1) manifest：宣告每個 stream 的 id / type / 記錄筆數。
@@ -136,13 +128,8 @@ FCB 文件刻意拆成「給人讀的導讀」與「給機器解析的精確規�
 >         stream_type: "fcb.syslog.v1".into(),
 >         records: 1,
 >     }];
->     // 2) header meta：manifest_to_meta 出 { streams: [...] }。
->     //    若同時要嵌 task，請另用 task::task_to_meta 出 { task: ... }，
->     //    並把 streams 排在 task 之前再合併（見上方 ⚠️）。
->     let meta = manifest_to_meta(&manifest).unwrap();
->
->     // 3) payload：自組 { streams: [StreamData{ id, records }] } 信封。
->     let payload = cbor::encode(&CasePayload {
+>     // 2) payload：{ streams: [StreamData{ id, records }] } 公開信封。
+>     let payload = CasePayload {
 >         streams: vec![StreamData {
 >             id: "s0".into(),
 >             records: vec![Value::Map(vec![
@@ -151,20 +138,15 @@ FCB 文件刻意拆成「給人讀的導讀」與「給機器解析的精確規�
 >                 (Value::Text("msg".into()), Value::Text("hello".into())),
 >             ])],
 >         }],
->     })
->     .unwrap();
->
->     // 4) BundleParams::new 帶預設 Argon2id cost；隨機 salt/nonce 由 pack_bytes 內部產生。
->     let mut params = BundleParams::new(BundleKind::Case, "case-demo", "sha256:deadbeef", meta);
->     params.m_cost = 32; // 示範用低成本；正式打包請刪掉這三行用預設。
->     params.t_cost = 1;
->     params.p_cost = 1;
->
->     bundle::pack_bytes(&params, &payload, "passphrase").unwrap()
+>     };
+>     // 3) pack_case：bundle_hash 由 canonical payload 自動算出；task=None 時 meta 不含 task。
+>     let input = CaseInput { case_id: "case-demo".into(), manifest, task: None, payload };
+>     pack_case(&input, "passphrase").unwrap()
 > }
 > ```
 >
-> 完整、含 RFC 5424／3164／minimal 三筆 worked example 的版本見 `crates/fcb/tests/stream_types.rs`。
+> 需要逐欄掌握底層 `bundle::pack_bytes` + `*_to_meta` 手組信封的版本，見
+> `crates/fcb/tests/stream_types.rs:88-115`（含 RFC 5424／3164／minimal 三筆 worked example）。
 
 ### 用非 Rust 語言寫：照 `fcb-reference.md` 逐位元對齊
 
@@ -175,45 +157,41 @@ FCB 文件刻意拆成「給人讀的導讀」與「給機器解析的精確規�
 > 參考實作不相容。驗收標準很單純：產出的位元組能通過 `cargo test -p fcb`（特別是
 > `case_vector_is_byte_stable` / `frozen_case_vector_decodes_to_expected_structure`），即視為相容。
 
-### 兩個必須自己補的環節（見「已知缺口」）
+### `.case` 產出：用 crate 的 `fcb::case`（生產／消費共用）
 
-> ⚠️ 目前 `fcb` crate **沒有**以下兩個公開 helper，case builder 實作時要嘛自己補、要嘛回頭在 crate 加
->（**建議後者**，讓生產／消費兩端共用同一份程式碼，從根本杜絕格式漂移）：
+> `fcb::case` 模組提供兩個權威 helper，生產端與消費端（含 WASM bridge）共用，從根本杜絕格式漂移：
 >
-> 1. 組 `.case` payload 信封 `{ streams: [StreamData, ...] }` 的寫入 helper（如 `evidence::pack_case`）。
->    crate 只有**讀**側（`StreamData`、`decode_streams`）；golden vector 與 `stream_types.rs` 都在 test
->    內自定 `CasePayload { streams }` 自組信封。
-> 2. `bundle_hash` 的**正規定義** helper。`binding::compute_bundle_hash(bytes)` 接受任意 bytes、回傳
->    `"sha256:" + lower_hex(SHA256(bytes))`，但**不規定** `bytes` 涵蓋範圍；golden vector 用假值
->    `"sha256:deadbeef"`。建議慣例是對 `.case` 的**明文 payload bytes**（壓縮／加密前）取 hash，但此
->    涵蓋範圍**尚未凍結**，codec 也不驗證。
+> 1. **`pack_case(&CaseInput, passphrase)`** — 組 `{ streams: [StreamData] }` 信封並封裝成 `.case`。
+>    `CaseInput { case_id, manifest, task, payload }`；`CasePayload { streams }` 是唯一的公開信封型別
+>    （golden vector、`stream_types.rs`、WASM bridge 皆重用，不再各自宣告 test-local 版本）。
+> 2. **canonical `bundle_hash`** — `case::case_bundle_hash(&CasePayload)` = `compute_bundle_hash(canonical
+>    明文 payload bytes)`，已**凍結**為「sha256(明文 payload bytes)」，並由 `pack_case` 自動帶入 header，
+>    使同一份證物無論 salt/nonce 為何皆得相同 hash。回歸測試：`crates/fcb/tests/vectors.rs` 的
+>    `case_canonical_bundle_hash_is_frozen`、`pack_case_round_trips_and_binds_hash`。
 
 ---
 
 ## 已知缺口（Known Gaps）
 
-誠實列出**尚未實作／尚未凍結**的部分，以免高估現況。這些是 case builder 作者實作前必須知道的：
+誠實列出**尚未實作／尚未凍結**的部分，以免高估現況：
 
-1. **沒有 `.case` payload 信封 helper（`pack_case`）。** crate 全檔無 `pack_case`／`CasePayload`（僅
-   test-local）；寫入側的 `{ streams: [...] }` 信封要自組。佐證：`crates/fcb/src/evidence.rs` 只有讀側、
-   `crates/fcb/tests/vectors.rs`、`crates/fcb/tests/stream_types.rs` 各自定義 test-local `CasePayload`。
-2. **`bundle_hash` 的正規定義未凍結。** `compute_bundle_hash` 對任意 bytes 取 SHA-256；「應該對哪段
-   bytes」是慣例而非強制，codec 不驗證涵蓋範圍。佐證：`crates/fcb/src/binding.rs`、golden 假值
-   `crates/fcb/tests/vectors.rs`。
-3. **`fcb.netflow.v1` / `fcb.json.v1` 尚無記錄 schema。** 兩者列在 `BUILTIN_STREAM_TYPES`（表示「有內建
+1. **`fcb.netflow.v1` / `fcb.json.v1` 尚無記錄 schema。** 兩者列在 `BUILTIN_STREAM_TYPES`（表示「有內建
    handler 的位置」），但 spec 與 crate 都**未定義**其 record schema；目前只有 `fcb.syslog.v1` 有凍結
    schema。佐證：`crates/fcb/src/evidence.rs` 的 `BUILTIN_STREAM_TYPES`、`fcb-data-model.md §3.2`。
-4. **WASM 綁定僅 `fcb_version`。** `crates/fcb/src/wasm.rs` 只導出 `fcb_version()`，尚無
-   `openBundle`／`packSubmission` 等 richer bindings。
-5. **plugin registry 是消費端概念、本 crate 未實作。** `DecodedStream` 的註解提到未知 type 會落
+2. **WASM 綁定僅 `fcb_version`。** `crates/fcb/src/wasm.rs` 只導出 `fcb_version()`，尚無
+   `openBundle`／`packSubmission` 等 richer bindings（註：`fcb-wasm` bridge crate 已有較完整的
+   native core，見 `crates/fcb-wasm/src/lib.rs`）。
+3. **plugin registry 是消費端概念、本 crate 未實作。** `DecodedStream` 的註解提到未知 type 會落
    generic fallback「或交給 a registered plugin」（`crates/fcb/src/evidence.rs:50`），但 crate 內**沒有
    任何 registry 程式碼**；plugin 介面屬 `plugin-protocol`（消費端 spec），與 `.case` 位元組格式無關。
-6. **payload 多出 manifest 未列的 stream，行為未測。** `decode_streams` 以 manifest 驅動迭代、用 `id`
+4. **payload 多出 manifest 未列的 stream，行為未測。** `decode_streams` 以 manifest 驅動迭代、用 `id`
    反查 payload；manifest 缺對應 payload → `Malformed`，但**反向**（payload 有 manifest 未宣告的多餘
    stream）會被靜默忽略，且**無任何測試斷言**這是刻意行為（`crates/fcb/src/evidence.rs:77-93`，未證實）。
    重寫 codec／自訂 case builder 時別依賴這個未凍結的行為。
 
-> `fcb-reference.md §9` 是最細的缺口清單（共 6 項）；本表已與其對齊。
+> ✅ 已關閉（本批）：**`pack_case` / `CasePayload` 公開 helper**、**canonical `bundle_hash` 凍結**——
+> 見上方「`.case` 產出」段與 `fcb::case` 模組。
 >
-> 前四項缺口都建議「**回頭在 `fcb` crate 補 helper／定 schema**」，而非只在 case builder 端自幹——這樣
-> browser workbench、case builder、教師審閱平台三方共用同一份真實程式碼，從根本杜絕格式漂移。
+> `fcb-reference.md §9` 是最細的缺口清單（共 4 項）；本表已與其對齊。第 1 項建議「**回頭在 `fcb`
+> crate 定 schema**」，而非只在消費端自幹——這樣 browser workbench、case builder、教師審閱平台三方
+> 共用同一份真實程式碼，從根本杜絕格式漂移。

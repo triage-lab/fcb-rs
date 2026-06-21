@@ -68,7 +68,10 @@ mod tests {
         Submission {
             case_id: "acme-ir-2026-03".into(),
             bundle_hash: "sha256:9f2c".into(),
-            student: Student { id: "s1234567".into(), name: "Lin".into() },
+            student: Student {
+                id: "s1234567".into(),
+                name: "Lin".into(),
+            },
             notes: vec![Value::Text("pinned auth.log line 42".into())],
             report: Value::Text("freeform report body".into()),
             activity: vec![Value::Text("search: failed login".into())],

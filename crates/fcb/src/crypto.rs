@@ -27,7 +27,10 @@ const KCV_DOMAIN: &[u8] = b"FCB-key-check-v1";
 /// Derive the symmetric key from a passphrase and the header's KDF params.
 pub fn derive_key(passphrase: &str, kdf: &KdfParams) -> Result<[u8; KEY_LEN]> {
     if kdf.algo != "argon2id" {
-        return Err(FcbError::Malformed(format!("unsupported KDF: {}", kdf.algo)));
+        return Err(FcbError::Malformed(format!(
+            "unsupported KDF: {}",
+            kdf.algo
+        )));
     }
     let params = Params::new(kdf.m_cost, kdf.t_cost, kdf.p_cost, Some(KEY_LEN))
         .map_err(|e| FcbError::Malformed(format!("bad argon2 params: {e}")))?;
@@ -166,6 +169,9 @@ mod tests {
     #[test]
     fn bad_nonce_length_is_malformed() {
         let key = [0u8; KEY_LEN];
-        assert!(matches!(seal(&key, &[0u8; 12], b"x"), Err(FcbError::Malformed(_))));
+        assert!(matches!(
+            seal(&key, &[0u8; 12], b"x"),
+            Err(FcbError::Malformed(_))
+        ));
     }
 }

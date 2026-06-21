@@ -431,16 +431,17 @@ key = 上面 32 bytes、nonce = 24 bytes（`header.aead.nonce`）、**無 AAD**�
 
 ## 5. `bundle_hash` 與 binding（信封層摘要）
 
-`compute_bundle_hash(bytes) -> "sha256:" + lower_hex(SHA256(bytes))`（`binding.rs`，小寫 hex）。
-**codec 不規定 `bytes` 是什麼**——golden vector 用占位假值 `"sha256:deadbeef"`（`vectors.rs:63`）。
+`compute_bundle_hash(bytes) -> "sha256:" + lower_hex(SHA256(bytes))`（`binding.rs`，小寫 hex）是低階
+primitive，對任意 bytes 算 hash；golden vector 的 header 仍用占位假值 `"sha256:deadbeef"`（`vectors.rs`）。
 
 `verify_binding(...)` 回傳三態 `Match` / `CaseMismatch` / `EvidenceVersionMismatch`；work key 慣例
 `work_key(case_id) = "fcb:work:{case_id}"`。binding 的完整規則、`.casework` 的 `Submission` schema
 與 binding 三態語意一律見 [`fcb-data-model.md`](./fcb-data-model.md) §5。
 
-**建議慣例：`bundle_hash = compute_bundle_hash(.case 的明文 payload bytes)`**，亦即壓縮／加密**之前**
-的證物序列化位元組。如此同一份證物無論 salt/nonce 為何都得到相同 hash，學生作品（`.casework`）才能
-可靠綁回特定證物版本。但**正規涵蓋範圍尚未凍結**（見 §9 已知缺口）。
+**canonical 定義（已凍結）：`bundle_hash = compute_bundle_hash(.case 的明文 payload bytes)`**，亦即壓縮／
+加密**之前**的證物序列化位元組。如此同一份證物無論 salt/nonce 為何都得到相同 hash，學生作品
+（`.casework`）才能可靠綁回特定證物版本。此定義由 `fcb::case::case_bundle_hash(&CasePayload)` 落實、
+由 `pack_case` 自動帶入 header，並以 `vectors.rs` 的 `case_canonical_bundle_hash_is_frozen` 凍結。
 
 ---
 
@@ -495,11 +496,13 @@ stream 記錄的逐欄 schema、演進／相容規則一律見 [`fcb-data-model.
 3. **組 task spec**：`TaskSpec`（**零答案**，data-model §6）。
 4. **`meta`**（明文）= CBOR `{ "streams": [manifest…], "task": TaskSpec }`（map(2) → 起頭 `a2`，`streams`
    在前；見 §2 規則 2b）。
-5. **`payload_plain`** = CBOR `{ "streams": [StreamData…] }`。此信封是**單欄 struct** `CasePayload { streams }`
-   （`vectors.rs:37-39`），ciborium 編成 map(1) → 起頭 **`a1`**，接 key `"streams"`（`67 73747265616d73`）
-   再接 array(n) 的 `StreamData`。`.casework` 此處改為 `Submission`（7 欄 struct → map(7) → `a7`，`submission.rs:25-40`）。
-6. **`bundle_hash`**：建議 = `compute_bundle_hash(payload_plain)`
-   （= `"sha256:" + lower_hex(SHA256(payload_plain))`）。⚠️ 正規涵蓋範圍尚未凍結（§5、§9）。
+5. **`payload_plain`** = CBOR `{ "streams": [StreamData…] }`。此信封是**單欄 struct** 公開型別
+   `fcb::case::CasePayload { streams }`，ciborium 編成 map(1) → 起頭 **`a1`**，接 key `"streams"`
+   （`67 73747265616d73`）再接 array(n) 的 `StreamData`。`.casework` 此處改為 `Submission`（7 欄 struct →
+   map(7) → `a7`，`submission.rs`）。
+6. **`bundle_hash`**：canonical = `compute_bundle_hash(payload_plain)`
+   （= `"sha256:" + lower_hex(SHA256(payload_plain))`），**已凍結**（§5、§9）；由 `case::case_bundle_hash`
+   落實、`pack_case` 自動帶入。
 7. **隨機**產生 `salt`(16 B) 與 `nonce`(24 B)（`bundle.rs:60, 65`，`getrandom`）。
 8. **key** = Argon2id(passphrase UTF-8, salt, m/t/p, version 0x13, out 32 B)（`bundle.rs:66`）。
 9. **key_check** = SHA256(`"FCB-key-check-v1"` ‖ key)（32 B；**加密前**算好，`bundle.rs:67`）。
@@ -539,15 +542,12 @@ stream 記錄的逐欄 schema、演進／相容規則一律見 [`fcb-data-model.
 
 ## 9. 已知缺口（Known Gaps）與 Non-Goals
 
+> ✅ 已關閉（本批）：**公開 `pack_case` / `CasePayload` helper** 與 **canonical `bundle_hash` 凍結**。
+> `.case` 的 `{streams}` 信封現由公開型別 `fcb::case::CasePayload` 統一，golden vector、`stream_types.rs`、
+> WASM bridge 皆重用；`pack_case` 一步封裝並自動帶入 canonical `bundle_hash`（§5、§8）。
+
 ### 已知缺口（誠實標註，尚未實作 / 未凍結）
 
-- **沒有公開的 `pack_case` helper。** crate 只提供 `bundle::pack_bytes`（吃已序列化的 payload
-  bytes）；`.case` 的 `{streams}` payload 信封要由呼叫端自組。golden vector 與 `stream_types.rs`
-  都是在測試裡手刻 `CasePayload { streams }`（`vectors.rs:31-35`、`stream_types.rs:18-21`），
-  證實目前 crate 沒有對外的 `.case` 打包 helper。
-- **`bundle_hash` 的正規涵蓋範圍未凍結。** `compute_bundle_hash` 只負責「對給定 bytes 算
-  `sha256:<hex>`」，至於那串 bytes 是「明文 payload」「整個檔案」還是別的，codec 不規定、不驗證
-  （§5）。生產端與消費端需先約定並固定，才能可靠 binding。
 - **`fcb.netflow.v1` / `fcb.json.v1` schema 未定義。** 兩者在 `BUILTIN_STREAM_TYPES` 內，但沒有
   欄位 schema（`evidence.rs:18`、data-model §3.2）；目前只有 `fcb.syslog.v1` 有定義。
 - **plugin registry 未實作（消費端概念）。** `DecodedStream.is_builtin == false` 的註解提到「或一個

@@ -39,7 +39,12 @@ pub struct BundleParams {
 
 impl BundleParams {
     /// Build params with the default Argon2id cost.
-    pub fn new(kind: BundleKind, case_id: impl Into<String>, bundle_hash: impl Into<String>, meta: Value) -> Self {
+    pub fn new(
+        kind: BundleKind,
+        case_id: impl Into<String>,
+        bundle_hash: impl Into<String>,
+        meta: Value,
+    ) -> Self {
         BundleParams {
             kind,
             case_id: case_id.into(),

@@ -10,13 +10,14 @@
 //! wasm runtime.
 
 use ciborium::value::Value;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use fcb::binding::{self, BindingCheck};
 use fcb::bundle::open_bytes;
+use fcb::case::CasePayload;
 use fcb::container::{peek_header, BundleKind};
 use fcb::error::FcbError;
-use fcb::evidence::{self, StreamData};
+use fcb::evidence;
 use fcb::submission::{self, Submission};
 use fcb::task::{self, TaskSpec};
 
@@ -72,14 +73,8 @@ pub struct CaseView {
     pub streams: Vec<StreamView>,
 }
 
-/// The `.case` payload envelope `{ streams: [StreamData] }`. The `fcb` crate has
-/// no public helper for this envelope yet (a known gap), so the bridge decodes
-/// it directly.
-#[derive(Debug, Deserialize)]
-struct CasePayload {
-    #[serde(default)]
-    streams: Vec<StreamData>,
-}
+// The `.case` payload envelope `{ streams: [StreamData] }` is the crate's public
+// `fcb::case::CasePayload` — the bridge decodes through that single shared type.
 
 // ---------------------------------------------------------------------------
 // Native-testable core.
@@ -229,7 +224,8 @@ mod wasm_api {
     /// Serialize a value to a JS object (maps become plain objects, not `Map`).
     fn to_js(v: &impl serde::Serialize) -> Result<JsValue, JsValue> {
         let s = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
-        v.serialize(&s).map_err(|e| JsValue::from_str(&e.to_string()))
+        v.serialize(&s)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     /// Build a JS `Error` carrying a stable `kind` discriminator.
@@ -267,8 +263,8 @@ mod wasm_api {
     /// Pack a submission (a JS object) into a sealed `.casework` bundle.
     #[wasm_bindgen(js_name = packSubmission)]
     pub fn pack_submission(submission: JsValue, passphrase: &str) -> Result<Vec<u8>, JsValue> {
-        let work: Submission =
-            serde_wasm_bindgen::from_value(submission).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let work: Submission = serde_wasm_bindgen::from_value(submission)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
         crate::pack_work(&work, passphrase).map_err(to_js_error)
     }
 
@@ -306,7 +302,7 @@ mod tests {
     use super::*;
     use fcb::bundle::{pack_bytes, BundleParams};
     use fcb::container::BundleKind;
-    use fcb::evidence::StreamManifest;
+    use fcb::evidence::{StreamData, StreamManifest};
     use fcb::submission::Student;
     use fcb::task::{ReportMode, TaskStep};
 
@@ -345,10 +341,6 @@ mod tests {
             streams: Vec<StreamManifest>,
             task: TaskSpec,
         }
-        #[derive(Serialize)]
-        struct CasePayloadOut {
-            streams: Vec<StreamData>,
-        }
         let manifest = vec![StreamManifest {
             id: "s0".into(),
             stream_type: "fcb.syslog.v1".into(),
@@ -359,14 +351,16 @@ mod tests {
             task: sample_task(),
         })
         .unwrap();
-        let payload = fcb::cbor::encode(&CasePayloadOut {
+        // The encrypted body uses the crate's public envelope type.
+        let payload = fcb::cbor::encode(&CasePayload {
             streams: vec![StreamData {
                 id: "s0".into(),
                 records: vec![syslog_record()],
             }],
         })
         .unwrap();
-        let mut params = BundleParams::new(BundleKind::Case, "acme-ir-2026-03", "sha256:deadbeef", meta);
+        let mut params =
+            BundleParams::new(BundleKind::Case, "acme-ir-2026-03", "sha256:deadbeef", meta);
         params.m_cost = 32; // fast Argon2 for tests
         params.t_cost = 1;
         params.p_cost = 1;
@@ -377,7 +371,10 @@ mod tests {
         Submission {
             case_id: "acme-ir-2026-03".into(),
             bundle_hash: "sha256:deadbeef".into(),
-            student: Student { id: "s1".into(), name: "Lin".into() },
+            student: Student {
+                id: "s1".into(),
+                name: "Lin".into(),
+            },
             notes: vec![t("pinned line 42")],
             report: t("freeform body"),
             activity: vec![t("search: failed login")],
@@ -389,7 +386,10 @@ mod tests {
     fn error_kind_matches_spec_table() {
         assert_eq!(error_kind(&FcbError::BadMagic), "bad-magic");
         assert_eq!(
-            error_kind(&FcbError::UnsupportedVersion { min_reader: 2, supported: 1 }),
+            error_kind(&FcbError::UnsupportedVersion {
+                min_reader: 2,
+                supported: 1
+            }),
             "unsupported-version"
         );
         assert_eq!(error_kind(&FcbError::Malformed("x".into())), "malformed");
@@ -412,7 +412,10 @@ mod tests {
 
     #[test]
     fn peek_rejects_non_fcb() {
-        assert_eq!(error_kind(&peek(b"\x00ELF not fcb").unwrap_err()), "bad-magic");
+        assert_eq!(
+            error_kind(&peek(b"\x00ELF not fcb").unwrap_err()),
+            "bad-magic"
+        );
     }
 
     #[test]
@@ -438,7 +441,10 @@ mod tests {
     #[test]
     fn open_case_rejects_a_casework() {
         let work = pack_work(&sample_submission(), PASS).unwrap();
-        assert!(matches!(open_case(&work, PASS), Err(FcbError::Malformed(_))));
+        assert!(matches!(
+            open_case(&work, PASS),
+            Err(FcbError::Malformed(_))
+        ));
     }
 
     #[test]
@@ -451,7 +457,10 @@ mod tests {
     #[test]
     fn open_work_rejects_a_case() {
         let case = build_case();
-        assert!(matches!(open_work(&case, PASS), Err(FcbError::Malformed(_))));
+        assert!(matches!(
+            open_work(&case, PASS),
+            Err(FcbError::Malformed(_))
+        ));
     }
 
     #[test]
@@ -461,7 +470,10 @@ mod tests {
         assert_eq!(h.len(), 7 + 64);
         assert_eq!(verify_binding("c", "h", "c", "h"), "match");
         assert_eq!(verify_binding("c", "h", "c2", "h"), "case-mismatch");
-        assert_eq!(verify_binding("c", "h", "c", "h2"), "evidence-version-mismatch");
+        assert_eq!(
+            verify_binding("c", "h", "c", "h2"),
+            "evidence-version-mismatch"
+        );
         assert_ne!(work_key("c1"), work_key("c2"));
     }
 }

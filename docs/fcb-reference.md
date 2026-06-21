@@ -577,7 +577,7 @@ verify_binding（順序）:
 - `EvidenceVersionMismatch` = 同 `case_id`、不同 evidence 版本（重新 issue 的 bundle）。
 - **case_id 先於 bundle_hash 檢查**——不同 case 永遠不會回 version mismatch（binding.rs:43-46）。
 
-> codec **不規定** `compute_bundle_hash` 的 `bytes` 是什麼——golden vector 用假值 `"sha256:deadbeef"`。涵蓋範圍是生產端責任。**建議慣例（未凍結）：** `bundle_hash = compute_bundle_hash(.case 明文 payload bytes)`（壓縮/加密前），使同一份證物無論 salt/nonce 為何皆得相同 hash。出處：binding.rs:12-22（無驗證）；vectors.rs:63。
+> 低階 `compute_bundle_hash` 對任意 `bytes` 算 hash、不驗證涵蓋範圍（golden vector 的 header 用假值 `"sha256:deadbeef"`）。**canonical 定義（已凍結）：** `bundle_hash = compute_bundle_hash(.case 明文 payload bytes)`（壓縮/加密前），由 `fcb::case::case_bundle_hash(&CasePayload)` 落實、`pack_case` 自動帶入，使同一份證物無論 salt/nonce 為何皆得相同 hash。出處：case.rs；binding.rs:12-22；vectors.rs `case_canonical_bundle_hash_is_frozen`。
 
 ### 6.6 答案安全不變量（answer-safety）
 
@@ -746,14 +746,16 @@ verify_binding（順序）:
 
 | 缺口 | 現況 | 出處 |
 |------|------|------|
-| **無 `pack_case` / `CasePayload` 寫入 helper** | crate 只提供「讀側」（`StreamData` 型別 + `decode_streams`），**無**組 `{streams:[...]}` 信封的公開寫入 helper。生產端須手組 CBOR 或自呼 `bundle::pack_bytes`。`CasePayload` 只是 test-local struct（兩個 test 各自定義） | evidence.rs（全檔無 `pack_case`/`CasePayload`）；vectors.rs:36-39；stream_types.rs:18-21 |
-| **`bundle_hash` 正規定義未凍結** | `compute_bundle_hash` 接受任意 bytes，**不綁定**特定 payload；codec 不驗證涵蓋範圍；golden 用假值。建議慣例見 §6.5，但**未在程式碼強制** | binding.rs:14-22；vectors.rs:63 |
-| **`fcb.netflow.v1` / `fcb.json.v1` 無記錄 schema** | 列在 `BUILTIN_STREAM_TYPES` 但 spec/crate 皆未定義其 record schema | evidence.rs:18；docs/fcb-data-model.md:210-214 |
-| **WASM 綁定最小** | `wasm.rs` 只導出 `fcb_version() -> String`（回 `CARGO_PKG_VERSION`），**無** `openBundle`/`packSubmission` 綁定 | wasm.rs:6-13 |
+| **`fcb.netflow.v1` / `fcb.json.v1` 無記錄 schema** | 列在 `BUILTIN_STREAM_TYPES` 但 spec/crate 皆未定義其 record schema | evidence.rs:18；docs/fcb-data-model.md §3.2 |
+| **WASM 綁定最小** | `wasm.rs` 只導出 `fcb_version() -> String`（回 `CARGO_PKG_VERSION`），**無** `openBundle`/`packSubmission` 綁定（註：`fcb-wasm` bridge crate 已有較完整 native core） | wasm.rs:6-13；crates/fcb-wasm/src/lib.rs |
 | **plugin registry 未實作** | `DecodedStream.is_builtin == false` 註解提及「a registered plugin」，但本 crate **無** registry 程式碼——是消費端（前端）概念 | evidence.rs:50（**未證實**有 registry） |
 | **多餘 payload stream 是否拒絕未測** | 原始碼顯示靜默忽略（manifest 驅動 iteration），但無測試斷言任一方向 | evidence.rs:78-92（**未證實**） |
 
-**Non-Goals（本 codec 不負責）：** `bundle_hash` 涵蓋範圍驗證、IndexedDB 實體 store（`work_key` 只給 key-derivation 邏輯，binding.rs:6-8）、消費端 plugin/query（屬 `plugin-protocol`/`query-model`，非 fcb codec）。
+> ✅ **已關閉（本批）：** `pack_case` / `CasePayload` 公開寫入 helper（`crates/fcb/src/case.rs`）、canonical
+> `bundle_hash` 凍結（`case::case_bundle_hash` = `compute_bundle_hash(明文 payload bytes)`，由 `pack_case`
+> 自動帶入；回歸 `vectors.rs` 的 `case_canonical_bundle_hash_is_frozen`、`pack_case_round_trips_and_binds_hash`）。
+
+**Non-Goals（本 codec 不負責）：** IndexedDB 實體 store（`work_key` 只給 key-derivation 邏輯，binding.rs:6-8）、消費端 plugin/query（屬 `plugin-protocol`/`query-model`，非 fcb codec）。
 
 ---
 
@@ -787,7 +789,7 @@ Package：`fcb` `0.1.0`，edition `2021`，license `MIT OR Apache-2.0`，`crate-
 3. **組 task spec**：`TaskSpec`（**零答案**，§6.6）。
 4. **meta**（明文）= CBOR `{ "streams": [manifest…], "task": TaskSpec }`（§3.0）。
 5. **payload_plain** = CBOR `{ "streams": [StreamData…] }`（§3.0）。
-6. **bundle_hash**：建議 = `compute_bundle_hash(payload_plain)`（= `"sha256:" + lower_hex(SHA256(payload_plain))`，§6.5）。⚠️ 正規涵蓋範圍未凍結（§9）。
+6. **bundle_hash**：canonical = `compute_bundle_hash(payload_plain)`（= `"sha256:" + lower_hex(SHA256(payload_plain))`，§6.5），**已凍結**；由 `case::case_bundle_hash` 落實、`pack_case` 自動帶入（§9）。
 7. **隨機**產 `salt`(16 B) 與 `nonce`(24 B)（§6.1）。
 8. **key** = Argon2id(passphrase UTF-8, salt, m/t/p, version 0x13, out 32 B)（§4.1）。
 9. **key_check** = SHA256(`"FCB-key-check-v1"` ‖ key)（32 B，§4.2）。
@@ -801,7 +803,7 @@ Package：`fcb` `0.1.0`，edition `2021`，license `MIT OR Apache-2.0`，`crate-
 
 順序要點：`salt`/`nonce` 在推 key 前產生；`key_check` 在加密前算；`header` 在 `salt`/`nonce`/`key_check`/`bundle_hash`/`meta` 備齊後才能序列化求 `hdr_len`（`header` **不含** `ciphertext`）。
 
-> **給 case builder 作者的捷徑：** Rust 寫的 case builder 直接相依 `fcb` crate（已是 `cdylib`+`rlib`），呼叫 `bundle::pack_bytes` + `evidence`/`task` 的 `*_to_meta` helper，零 CBOR 漂移風險。只有用**非 Rust** 重寫 codec 時才需逐位元對齊本檔並以 golden vectors（§8）驗證。注意：`{streams:[...]}` payload 信封與 `bundle_hash` 正規定義目前無公開 helper（§9），這兩塊要自補或回頭在 crate 加 helper。
+> **給 case builder 作者的捷徑：** Rust 寫的 case builder 直接相依 `fcb` crate（已是 `cdylib`+`rlib`），呼叫 **`fcb::case::pack_case(&CaseInput, passphrase)`** 即一步完成 `{streams}` 信封、canonical `bundle_hash` 與封裝，零 CBOR 漂移風險（`{streams:[...]}` payload 信封與 `bundle_hash` 正規定義現皆有公開 helper）。只有用**非 Rust** 重寫 codec 時才需逐位元對齊本檔並以 golden vectors（§8）驗證。
 
 ---
 

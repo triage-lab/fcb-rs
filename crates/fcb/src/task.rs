@@ -52,7 +52,9 @@ struct TaskMeta {
 
 /// Encode a task spec into the opaque `header.meta` value.
 pub fn task_to_meta(task: &TaskSpec) -> Result<Value> {
-    cbor::to_value(&TaskMeta { task: Some(task.clone()) })
+    cbor::to_value(&TaskMeta {
+        task: Some(task.clone()),
+    })
 }
 
 /// Read the task spec from an opaque `header.meta` value (tolerant of other

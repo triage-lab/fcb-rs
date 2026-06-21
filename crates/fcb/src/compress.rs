@@ -34,7 +34,9 @@ pub fn compress(data: &[u8]) -> Result<Vec<u8>> {
 pub fn decompress(data: &[u8]) -> Result<Vec<u8>> {
     let mut decoder = StreamingDecoder::new(data).map_err(|_| FcbError::Corrupt)?;
     let mut out = Vec::new();
-    decoder.read_to_end(&mut out).map_err(|_| FcbError::Corrupt)?;
+    decoder
+        .read_to_end(&mut out)
+        .map_err(|_| FcbError::Corrupt)?;
     Ok(out)
 }
 

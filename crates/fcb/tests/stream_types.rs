@@ -9,16 +9,10 @@
 
 use ciborium::value::Value;
 use fcb::bundle::{self, BundleParams};
+use fcb::case::CasePayload;
+use fcb::cbor;
 use fcb::container::BundleKind;
 use fcb::evidence::{decode_streams, manifest_to_meta, StreamData, StreamManifest};
-use fcb::cbor;
-use serde::{Deserialize, Serialize};
-
-/// Mirror of vectors.rs: the encrypted payload is just the stream records.
-#[derive(Serialize, Deserialize)]
-struct CasePayload {
-    streams: Vec<StreamData>,
-}
 
 /// Helper: build a CBOR map record from string-keyed entries.
 fn record(entries: Vec<(&str, Value)>) -> Value {
@@ -73,7 +67,8 @@ fn rfc3164_record() -> Value {
         (
             "raw",
             Value::Text(
-                "<34>Oct 11 22:14:15 mymachine su: 'su root' failed for lonvick on /dev/pts/8".into(),
+                "<34>Oct 11 22:14:15 mymachine su: 'su root' failed for lonvick on /dev/pts/8"
+                    .into(),
             ),
         ),
     ])
