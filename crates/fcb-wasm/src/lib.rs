@@ -190,13 +190,59 @@ pub fn open_work(bytes: &[u8], passphrase: &str) -> Result<Submission, FcbError>
     submission::open_submission(bytes, passphrase)
 }
 
-/// Pack a submission into a sealed `.casework` bundle.
+/// The largest IEEE-754 double that is an exact ("safe") integer: `2^53 - 1`.
+/// Beyond this magnitude a JS `number` cannot faithfully carry an integer, so
+/// serde-wasm-bindgen encodes such a value as a CBOR float — diverging from a
+/// native producer that would use a CBOR integer, which would change the
+/// canonical payload and the `bundle_hash`. Out-of-range integers MUST instead
+/// be supplied as a `BigInt`, which serde-wasm-bindgen encodes as a CBOR integer.
+const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+
+/// Enforce the deterministic-encoding contract on a record value: reject any
+/// integer-valued float whose magnitude exceeds the JS safe-integer range
+/// (a number that should have been a `BigInt`). Genuine fractional floats,
+/// safe-range integers, and BigInt-sourced integers (which arrive as CBOR
+/// integers, not floats) all pass. Recurses into arrays, maps, and tags.
+fn check_numeric_determinism(value: &Value) -> Result<(), FcbError> {
+    match value {
+        Value::Float(f) if f.is_finite() && f.fract() == 0.0 && f.abs() > MAX_SAFE_INTEGER => {
+            Err(FcbError::Malformed(format!(
+                "record holds an integer-valued number {f} outside the JS safe-integer range; \
+                 supply it as a BigInt to preserve its integer encoding"
+            )))
+        }
+        Value::Array(items) => items.iter().try_for_each(check_numeric_determinism),
+        Value::Map(entries) => entries.iter().try_for_each(|(k, v)| {
+            check_numeric_determinism(k)?;
+            check_numeric_determinism(v)
+        }),
+        Value::Tag(_, inner) => check_numeric_determinism(inner),
+        _ => Ok(()),
+    }
+}
+
+/// Pack a submission into a sealed `.casework` bundle. Enforces the pack-boundary
+/// numeric-determinism contract over the submission's record fields.
 pub fn pack_work(work: &Submission, passphrase: &str) -> Result<Vec<u8>, FcbError> {
+    for v in work
+        .notes
+        .iter()
+        .chain(std::iter::once(&work.report))
+        .chain(work.activity.iter())
+    {
+        check_numeric_determinism(v)?;
+    }
     submission::pack_submission(work, passphrase)
 }
 
 /// Pack an evidence case into a sealed `.case` bundle (mirror of `pack_work`).
+/// Enforces the pack-boundary numeric-determinism contract over every record.
 pub fn pack_case(input: &CaseInput, passphrase: &str) -> Result<Vec<u8>, FcbError> {
+    for stream in &input.payload.streams {
+        for record in &stream.records {
+            check_numeric_determinism(record)?;
+        }
+    }
     fcb_pack_case(input, passphrase)
 }
 
@@ -467,6 +513,73 @@ mod tests {
     }
 
     #[test]
+    fn check_numeric_determinism_boundary() {
+        use ciborium::value::Value;
+        // Safe-range integer and genuine float pass.
+        assert!(super::check_numeric_determinism(&Value::Integer(7.into())).is_ok());
+        assert!(super::check_numeric_determinism(&Value::Float(1.5)).is_ok());
+        // Integer-valued float inside the safe range passes (2^53 - 1 boundary).
+        assert!(super::check_numeric_determinism(&Value::Float(9_007_199_254_740_991.0)).is_ok());
+        // 2^53 (integer-valued float, out of safe range) is rejected.
+        assert!(matches!(
+            super::check_numeric_determinism(&Value::Float(9_007_199_254_740_992.0)),
+            Err(FcbError::Malformed(_))
+        ));
+        // Nested inside an array/map is also caught.
+        let nested = Value::Array(vec![Value::Map(vec![(
+            Value::Text("k".into()),
+            Value::Float(9_007_199_254_740_992.0),
+        )])]);
+        assert!(matches!(
+            super::check_numeric_determinism(&nested),
+            Err(FcbError::Malformed(_))
+        ));
+        // NaN / Inf are genuine (non-integer-valued) floats -> allowed.
+        assert!(super::check_numeric_determinism(&Value::Float(f64::NAN)).is_ok());
+        assert!(super::check_numeric_determinism(&Value::Float(f64::INFINITY)).is_ok());
+    }
+
+    #[test]
+    fn pack_case_rejects_out_of_safe_range_integer() {
+        // A record carrying an integer-valued float beyond 2^53 is rejected at
+        // the pack boundary (it would diverge from a native integer author).
+        let input = CaseInput {
+            case_id: "c".into(),
+            manifest: vec![StreamManifest {
+                id: "s0".into(),
+                stream_type: "fcb.json.v1".into(),
+                records: 1,
+            }],
+            task: None,
+            payload: CasePayload {
+                streams: vec![StreamData {
+                    id: "s0".into(),
+                    records: vec![Value::Float(9_007_199_254_740_992.0)],
+                }],
+            },
+        };
+        assert!(matches!(pack_case(&input, PASS), Err(FcbError::Malformed(_))));
+        // A safe-range integer record packs fine.
+        let ok = CaseInput {
+            payload: CasePayload {
+                streams: vec![StreamData {
+                    id: "s0".into(),
+                    records: vec![Value::Integer(7.into())],
+                }],
+            },
+            ..input
+        };
+        assert!(pack_case(&ok, PASS).is_ok());
+    }
+
+    #[test]
+    fn pack_work_rejects_out_of_safe_range_integer() {
+        let mut work = sample_submission();
+        work.activity = vec![Value::Float(9_007_199_254_740_992.0)];
+        assert!(matches!(pack_work(&work, PASS), Err(FcbError::Malformed(_))));
+    }
+
+    #[test]
     fn case_round_trips_through_bridge() {
         let input = sample_case_input();
         let bytes = pack_case(&input, PASS).unwrap();
@@ -620,5 +733,73 @@ mod wasm_tests {
             .as_string()
             .unwrap();
         assert_eq!(bundle_hash, FROZEN_CASE_BUNDLE_HASH);
+    }
+
+    /// Build a single-stream `.case` carrying one `record` value and return its
+    /// bundle_hash, or the error `kind` if packing failed.
+    fn pack_hash_for(record: JsValue) -> Result<String, String> {
+        use js_sys::{Array, Object, Reflect};
+        let me = Object::new();
+        Reflect::set(&me, &"id".into(), &"s0".into()).unwrap();
+        Reflect::set(&me, &"type".into(), &"fcb.json.v1".into()).unwrap();
+        Reflect::set(&me, &"records".into(), &JsValue::from(1u32)).unwrap();
+        let manifest = Array::new();
+        manifest.push(&me);
+
+        let records = Array::new();
+        records.push(&record);
+        let stream = Object::new();
+        Reflect::set(&stream, &"id".into(), &"s0".into()).unwrap();
+        Reflect::set(&stream, &"records".into(), &records).unwrap();
+        let streams = Array::new();
+        streams.push(&stream);
+        let payload = Object::new();
+        Reflect::set(&payload, &"streams".into(), &streams).unwrap();
+
+        let case = Object::new();
+        Reflect::set(&case, &"case_id".into(), &"c".into()).unwrap();
+        Reflect::set(&case, &"manifest".into(), &manifest).unwrap();
+        Reflect::set(&case, &"payload".into(), &payload).unwrap();
+
+        match crate::wasm_api::pack_case(case.into(), PASS) {
+            Ok(bytes) => {
+                let info = crate::wasm_api::peek_header(&bytes).unwrap();
+                Ok(Reflect::get(&info, &"bundle_hash".into())
+                    .unwrap()
+                    .as_string()
+                    .unwrap())
+            }
+            Err(e) => Err(Reflect::get(&e, &"kind".into())
+                .ok()
+                .and_then(|k| k.as_string())
+                .unwrap_or_else(|| "unknown".into())),
+        }
+    }
+
+    // Characterization (verified at the real serde-wasm-bindgen boundary): a
+    // plain JS number at/above 2^53 encodes as a CBOR float — a distinct
+    // canonical encoding from a BigInt, which encodes as a CBOR integer. So the
+    // pack boundary rejects integer-valued out-of-safe-range numbers and
+    // requires a BigInt for them; safe-range integers and genuine floats pass.
+    #[wasm_bindgen_test]
+    fn numeric_boundary_contract() {
+        use js_sys::BigInt;
+        // Safe-range integers pack fine (7 and 2^53 - 1).
+        assert!(pack_hash_for(JsValue::from_f64(7.0)).is_ok());
+        assert!(pack_hash_for(JsValue::from_f64(9007199254740991.0)).is_ok());
+        // A genuine (fractional) float packs fine.
+        assert!(pack_hash_for(JsValue::from_f64(1.5)).is_ok());
+        // A plain JS number at 2^53 (integer-valued, out of safe range) is rejected.
+        assert_eq!(
+            pack_hash_for(JsValue::from_f64(9007199254740992.0)),
+            Err("malformed".to_string())
+        );
+        // The same out-of-range integer supplied as a BigInt packs fine...
+        let big = pack_hash_for(JsValue::from(BigInt::from(9007199254740993i64)));
+        assert!(big.is_ok());
+        // ...and a different BigInt integer yields a different hash (lossless).
+        let big2 = pack_hash_for(JsValue::from(BigInt::from(9007199254740994i64)));
+        assert!(big2.is_ok());
+        assert_ne!(big, big2);
     }
 }
