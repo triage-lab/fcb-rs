@@ -714,9 +714,14 @@ verify_binding（順序）:
 - payload：`WorkPayload{ case_id:"acme-ir-2026-03", bundle_hash:"sha256:deadbeef", report:Text("freeform report") }`；meta = 空 map（vectors.rs:96-104）。
 - binding 斷言 `Match`（`verify_binding(work.case_id, work.bundle_hash, header.case_id, header.bundle_hash)`，vectors.rs:149-152）。
 
-> ⚠️ **`FROZEN_WORK_HEX` 凍結的是測試用 3 欄 `WorkPayload`（`case_id`/`bundle_hash`/`report`），不是 library 的 7 欄 `Submission`（§6.4）。** `WorkPayload` 是 test-local struct（vectors.rs:40-45），與真正寫入 `.casework` 的 `Submission`（submission.rs:25-40）欄位集**不同**。目前**沒有任何 golden vector 釘住真實 `Submission` 的 on-disk 位元組**——`Submission` 只有 `submission_random_round_trip`（random salt/nonce，vectors.rs:175-189）覆蓋，只證 round-trip、**不證 byte-stability**。非 Rust 重實作者若要驗 `Submission` byte-exactness，須自補向量。出處：vectors.rs:40-45,96-104（`WorkPayload`）vs submission.rs:25-40（`Submission`）。
+### 8.6 golden SUBMISSION 結構（`build_submission`，真實 7 欄 `Submission`）
 
-### 8.6 佔位值（**非真實生產資料**）
+- payload：真實 7 欄 `Submission{ case_id:"acme-ir-2026-03", bundle_hash:"sha256:deadbeef", student:{id:"s1234567", name:"Lin"}, notes:[Text("pinned auth.log line 42")], report:Text("freeform report body"), activity:[Text("search: failed login")], exported_at:"2026-06-20T10:00:00Z" }`；KIND=work、meta = 空 map。
+- 凍結向量 `FROZEN_SUBMISSION_HEX` + `submission_vector_is_byte_stable`（byte-stability）、`frozen_submission_vector_decodes_to_expected_structure`（7 欄還原）。
+
+> ℹ️ **兩條 `.casework` 向量並存：** `FROZEN_WORK_HEX` 凍結 test-local 3 欄 `WorkPayload`（歷史保留，證 container frame／空 meta／crypto 管線）；`FROZEN_SUBMISSION_HEX` 凍結 library 真實 7 欄 `Submission`（`submission.rs`）的 on-disk 位元組。非 Rust 重實作者驗 `Submission` byte-exactness 直接比對 `FROZEN_SUBMISSION_HEX` 即可。另有 `FROZEN_CASE_PAYLOAD_HEX` 釘住 canonical `.case` 明文 payload 位元組（與 `FROZEN_CASE_BUNDLE_HASH` 互補）。
+
+### 8.7 佔位值（**非真實生產資料**）
 
 | 項目 | 凍結值 | 狀態 | 出處 |
 |------|--------|------|------|

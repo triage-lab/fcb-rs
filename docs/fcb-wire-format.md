@@ -518,12 +518,11 @@ stream 記錄的逐欄 schema、演進／相容規則一律見 [`fcb-data-model.
 > `.casework` 相同，差別只在：`KIND = 0x02`、`meta = {}`（空 map）、`payload_plain = CBOR(Submission)`
 > （見 data-model §4）。
 >
-> ⚠️ **`FROZEN_WORK_HEX` 凍結的不是 `Submission`。** 唯一的 `.casework` byte-stable 向量
-> （`vectors.rs:29`）其 payload 是用**測試專用的 3 欄 `WorkPayload { case_id, bundle_hash, report }`**
-> 建出來的（`vectors.rs:40-45, 96-104`），**不是** library 真正會寫的 7 欄 `Submission`
-> （`submission.rs:25-40`）。換言之，目前**沒有任何 golden vector 釘住 `Submission` 的 on-disk 位元組**；
-> `Submission` 只由 random-salt 的 `submission_random_round_trip`（`vectors.rs:175-189`）覆蓋——那只證
-> round-trip、不證 byte-stability。重寫 codec 想驗 `Submission` 的 byte-exactness，須自行補向量。
+> ℹ️ **兩個 `.casework` byte-stable 向量。** `FROZEN_WORK_HEX` 凍結的是**測試專用的 3 欄
+> `WorkPayload { case_id, bundle_hash, report }`**（歷史向量保留）；library 真正會寫的 7 欄 `Submission`
+> （`submission.rs`）則由 **`FROZEN_SUBMISSION_HEX` + `submission_vector_is_byte_stable`**（`vectors.rs`）
+> 逐位元釘住，並有 `frozen_submission_vector_decodes_to_expected_structure` 驗 7 欄還原。重寫 codec 想驗
+> `Submission` 的 byte-exactness，直接比對 `FROZEN_SUBMISSION_HEX` 即可。
 
 > **想要可直接照抄、會編譯的範例？** Rust 端最小可跑的打包範例見
 > `crates/fcb/tests/stream_types.rs:93-120`（`round_trip`：組 `StreamManifest` → `manifest_to_meta` →

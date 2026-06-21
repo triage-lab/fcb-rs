@@ -580,13 +580,12 @@ derive `Eq`。
 > 兩者複製進 header params，`submission.rs:47-48`）：教師平台可不解密、先讀 header 取得綁定資訊，解密後
 > 再用 payload 內的值交叉驗證。
 
-> ⚠️ **`Submission` 的 on-disk byte 順序／編碼目前沒有 golden vector 凍結。** 唯一 byte-stable 的 WORK
-> 向量 `FROZEN_WORK_HEX` 其實是用 **test-local 的 3 欄 `WorkPayload { case_id, bundle_hash, report }`**
-> （`vectors.rs:40-45, 96-104`）建出來的，**不是** library 的 7 欄 `Submission`——它凍結的是 container
-> frame（KIND=2／空 meta `a0`／crypto 管線）與這 3 欄 stand-in，**不**釘住 `Submission` 的欄位順序或
-> 編碼。真正的 7 欄 `Submission` 只有 random-salt 的往返測試 `submission_random_round_trip`
-> （`vectors.rs:175-189`）覆蓋——只證 round-trip、不證 byte-stability。非 Rust 重實作者若要驗 `Submission`
-> 的 byte-exactness，須自行補向量；目前不能拿 `FROZEN_WORK_HEX` 當 `Submission` 的位元組依據。
+> ℹ️ **`Submission` 的 on-disk 位元組已由 golden vector 凍結。** `FROZEN_SUBMISSION_HEX`
+> （`vectors.rs`，固定 salt/nonce）逐位元釘住真實 7 欄 `Submission` 的封裝，並由
+> `submission_vector_is_byte_stable` 守住格式回歸、`frozen_submission_vector_decodes_to_expected_structure`
+> 驗 7 欄還原。`FROZEN_WORK_HEX` 則是另一條向量，凍結 **test-local 的 3 欄 `WorkPayload`**（歷史保留，
+> 證 container frame／空 meta `a0`／crypto 管線）。非 Rust 重實作者要驗 `Submission` byte-exactness，
+> 直接比對 `FROZEN_SUBMISSION_HEX` 即可，不需自補向量。
 
 ---
 
@@ -780,7 +779,9 @@ open：   ciphertext --(AEAD open，先 KCV 檢查)--> zstd frame --(zstd decomp
 > ✅ **已關閉（本批）：** (1) `.case` payload 信封 helper 與 canonical `bundle_hash` 凍結——公開型別
 > `fcb::case::CasePayload { streams }` 與 `pack_case(&CaseInput, passphrase)` 統一生產／消費序列化、
 > `case::case_bundle_hash` 凍結 `bundle_hash = sha256(明文 payload bytes)`（§13 步驟 4–5）；(2)
-> **`fcb.netflow.v1` / `fcb.json.v1` 記錄 schema 凍結**（§3.2／§3.3，`stream_types.rs` round-trip 測試）。
+> **`fcb.netflow.v1` / `fcb.json.v1` 記錄 schema 凍結**（§3.2／§3.3，`stream_types.rs` round-trip 測試）；
+> (3) **`Submission` byte-stable golden vector**——`FROZEN_SUBMISSION_HEX` + `submission_vector_is_byte_stable`
+> 釘住真實 7 欄 `Submission` 的 on-disk 位元組（§6）。
 
 1. **WASM 綁定僅 `fcb_version`。** `crates/fcb/src/wasm.rs` 只導出 `fcb_version()`（回 `CARGO_PKG_VERSION`），
    尚無 `openBundle`／`packSubmission` 等 richer binding（`wasm.rs:6-13`；註：`fcb-wasm` bridge crate 已有
@@ -790,8 +791,6 @@ open：   ciphertext --(AEAD open，先 KCV 檢查)--> zstd frame --(zstd decomp
    （另見下方 Non-Goals）。
 3. **payload 多餘 stream 的行為無測試斷言。** payload 含 manifest 未列的 stream 會被**靜默忽略**（§2 不變量，
    迭代由 manifest 驅動，`evidence.rs:78-92`），但此行為**沒有專屬測試**——是否刻意如此**未證實**。
-4. **`Submission` 無 byte-stability 凍結。** golden WORK 向量凍結的是 test-local 3 欄 `WorkPayload`，**非**
-   library 的 7 欄 `Submission`（詳見 §6）；目前無向量釘住 `Submission` 的 on-disk 位元組。
 
 **Non-Goals（本檔／本層不負責）：**
 
