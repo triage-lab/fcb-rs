@@ -1,0 +1,10 @@
+## 1. 撰寫整合指南
+
+- [x] 1.1 （Requirement: Integration guide covers the Rust consumption path）（Requirement: Integration guide describes the end-to-end flow and cross-links authoritative docs）新增 `docs/fcb-integration-guide.md` 的 Rust 章節與端到端章節：Cargo git dependency 宣告；開封 `.case`（`bundle::open_bytes` + `container::peek_header` + `evidence::decode_streams`）、產出 `.case`（`case::pack_case`）、產出/開封 `.casework`（`submission::pack_submission` / `open_submission`）、驗 binding（`binding::verify_binding`）的可跑片段；teacher→student→platform 端到端時序；交叉連結 `docs/fcb-wire-format.md`、`docs/fcb-data-model.md`、`docs/fcb-reference.md`、`docs/README.md`。完成定義：Rust 路徑各操作各有片段、端到端時序與交叉連結齊備。驗證：人工審閱 API 名稱與 `crates/fcb/src/*` 一致、連結指向存在檔案。
+- [x] 1.2 （Requirement: Integration guide covers the WASM/JS consumption path）（Requirement: Integration guide documents error-kind handling）在 `docs/fcb-integration-guide.md` 補 WASM/JS 章節與 error-kind 章節：`wasm-pack build crates/fcb-wasm --target ...` 指令、JS 呼叫 `peekHeader`/`openCase`/`openSubmission`/`packSubmission`/`computeBundleHash`/`verifyBinding`/`workKey`、一個薄 adapter；`FcbError` 五變體對 `error_kind` 字串（`bad-magic`/`unsupported-version`/`malformed`/`wrong-passphrase`/`corrupt`）的對照與處理建議。完成定義：JS API 七個函式與五個 error kind 皆涵蓋、含 adapter。驗證：人工核對函式名與 `crates/fcb-wasm/src/lib.rs` 的 `js_name`／`error_kind` 一致。
+- [x] 1.3 （Requirement: Integration guide states the golden-vector contract）在 `docs/fcb-integration-guide.md` 補 golden-vector 契約章節：說明消費端（尤其非 Rust 重實作）如何拿 `crates/fcb/tests/vectors.rs` 的 `FROZEN_*` 向量 decode + 逐位元比對做相容性基準。完成定義：含 golden-vector 用法與向量清單。驗證：人工核對向量名稱與 `vectors.rs` 一致。
+
+## 2. 交叉連結與一致性
+
+- [x] 2.1 在 `docs/README.md` 與根 `README.md` 的文件入口各加一條指向 `docs/fcb-integration-guide.md` 的連結。完成定義：兩處皆有連結。驗證：`rg "fcb-integration-guide" docs/README.md README.md` 命中。
+- [x] 2.2 一致性自檢：確認指南內所有 API 名稱、JS 函式名、error kind、向量名、`wasm-pack` 指令、檔案連結均與 repo 現況一致（避免 fork-and-drift）。完成定義：無不存在的 API/路徑、連結皆可解析。驗證：`rg "pack_case|open_bytes|peekHeader|error_kind|FROZEN_" docs/fcb-integration-guide.md` 命中且名稱正確、`ls` 連結目標存在。

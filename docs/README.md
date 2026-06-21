@@ -34,6 +34,7 @@ FCB 文件刻意拆成「給人讀的導讀」與「給機器解析的精確規�
 | [`fcb-wire-format.md`](./fcb-wire-format.md) | 人類導讀 | **外層信封**：container 位元組佈局（magic / KIND / `container_version` / `hdr_len` / header / payload）、passphrase 密碼學（Argon2id + XChaCha20-Poly1305 + KCV）、compress-then-encrypt 管線、CBOR 編碼規則與互通陷阱、端到端打包流程。 |
 | [`fcb-data-model.md`](./fcb-data-model.md) | 人類導讀 | **內層資料結構**：header `meta`（stream manifest + task spec）、`.case` payload 信封、各 stream type 的記錄 schema（含 `fcb.syslog.v1`、ECS 對照、演進規則）、`.casework`（Submission）、binding 與答案安全不變量。 |
 | [`fcb-reference.md`](./fcb-reference.md) | 機器可解析的權威規格 | 把上述兩份散文導讀的內容整併成**單一、無歧義、可逐項機器解析**的參考：完整欄位表、Rust 型別↔CBOR 對映、ciborium 慣例、常數值、error 語意、不變量與 golden-vector 出處。手刻 codec 或寫驗證工具時以此為準。 |
+| [`fcb-integration-guide.md`](./fcb-integration-guide.md) | 消費端 getting-started | 從**消費端**把 `fcb-rs` 接起來：Rust（Cargo git dep）與 WASM/JS 兩條路的可跑範例、error kind 處理、golden-vector 契約、teacher→student→platform 端到端流程。建在本三份權威 docs 之上、交叉連結。 |
 
 > **三份 docs 已互相對齊。** `fcb-reference.md` 為機器可解析的精確規格鏡像層（欄位表／CBOR marker／
 > 常數／error 目錄／不變量總表皆已齊備）；`fcb-wire-format.md` 與 `fcb-data-model.md` 為人類導讀。
