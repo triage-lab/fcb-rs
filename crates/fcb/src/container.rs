@@ -128,6 +128,19 @@ fn read_u32(b: &[u8], pos: &mut usize) -> Result<u32> {
     Ok(u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
 }
 
+/// Slice the `hdr_len`-byte header beginning at `pos`, computing the end offset
+/// with overflow-safe arithmetic. `hdr_len` is derived from an untrusted `u32`
+/// length prefix; on a 32-bit target (e.g. `wasm32`) a value near `u32::MAX`
+/// makes `pos + hdr_len` overflow `usize`, which would panic in a debug build
+/// or wrap to an in-range-but-wrong slice in release. `checked_add` turns any
+/// overflowing or out-of-bounds length into a `Malformed` rejection on every
+/// target, without changing the result for a well-formed container.
+fn header_slice(bytes: &[u8], pos: usize, hdr_len: usize) -> Result<&[u8]> {
+    pos.checked_add(hdr_len)
+        .and_then(|end| bytes.get(pos..end))
+        .ok_or_else(|| FcbError::Malformed("header length out of bounds".into()))
+}
+
 /// Serialize a header to its plaintext CBOR bytes.
 pub fn encode_header(header: &Header) -> Result<Vec<u8>> {
     let mut buf = Vec::new();
@@ -176,9 +189,7 @@ pub fn peek_header(bytes: &[u8]) -> Result<Header> {
     pos += 1;
     let _container_version = read_u16(bytes, &mut pos)?;
     let hdr_len = read_u32(bytes, &mut pos)? as usize;
-    let header_bytes = bytes
-        .get(pos..pos + hdr_len)
-        .ok_or_else(|| FcbError::Malformed("header length out of bounds".into()))?;
+    let header_bytes = header_slice(bytes, pos, hdr_len)?;
     let header: Header = ciborium::from_reader(header_bytes)
         .map_err(|e| FcbError::Malformed(format!("bad header CBOR: {e}")))?;
     if header.min_reader > READER_VERSION {
@@ -205,9 +216,7 @@ pub fn read_container(bytes: &[u8]) -> Result<Container> {
     pos += 1;
     let container_version = read_u16(bytes, &mut pos)?;
     let hdr_len = read_u32(bytes, &mut pos)? as usize;
-    let header_bytes = bytes
-        .get(pos..pos + hdr_len)
-        .ok_or_else(|| FcbError::Malformed("header length out of bounds".into()))?;
+    let header_bytes = header_slice(bytes, pos, hdr_len)?;
     pos += hdr_len;
     let header: Header = ciborium::from_reader(header_bytes)
         .map_err(|e| FcbError::Malformed(format!("bad header CBOR: {e}")))?;
@@ -327,5 +336,33 @@ mod tests {
             read_container(&bytes),
             Err(FcbError::Malformed(_))
         ));
+    }
+
+    #[test]
+    fn header_slice_rejects_overflowing_offset() {
+        // `hdr_len` comes from an untrusted u32. On a 32-bit target a value near
+        // u32::MAX makes `pos + hdr_len` overflow usize; we force that exact
+        // overflow branch on any target by passing pos = usize::MAX. A naive
+        // `pos + hdr_len` panics in a debug build — header_slice must instead
+        // reject with Malformed and never panic.
+        assert!(matches!(
+            header_slice(&[], usize::MAX, 1),
+            Err(FcbError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn oversized_hdr_len_is_malformed() {
+        // A container that declares hdr_len = u32::MAX but carries only a few
+        // header bytes must be rejected as Malformed (not panic) on every
+        // target, including 32-bit where pos + hdr_len would overflow usize.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&MAGIC);
+        bytes.push(BundleKind::Case.to_u8());
+        bytes.extend_from_slice(&CONTAINER_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&u32::MAX.to_le_bytes());
+        bytes.extend_from_slice(b"short");
+        assert!(matches!(read_container(&bytes), Err(FcbError::Malformed(_))));
+        assert!(matches!(peek_header(&bytes), Err(FcbError::Malformed(_))));
     }
 }

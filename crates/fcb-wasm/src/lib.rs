@@ -802,4 +802,24 @@ mod wasm_tests {
         assert!(big2.is_ok());
         assert_ne!(big, big2);
     }
+
+    // Regression for the container hdr_len usize-overflow guard. On wasm32
+    // (usize == u32) a hdr_len near u32::MAX makes `pos + hdr_len` overflow,
+    // which a debug build would panic on. open_case must return an error, not
+    // abort. Start from a valid .case and corrupt the 4-byte hdr_len field
+    // (offset 7..11, after magic(4) + KIND(1) + container_version(2)).
+    #[wasm_bindgen_test]
+    fn oversized_hdr_len_does_not_panic() {
+        let case = js_sys::JSON::parse(
+            r#"{
+                "case_id": "c",
+                "manifest": [ { "id": "s0", "type": "fcb.json.v1", "records": 1 } ],
+                "payload": { "streams": [ { "id": "s0", "records": [1] } ] }
+            }"#,
+        )
+        .unwrap();
+        let mut bytes = crate::wasm_api::pack_case(case, PASS).unwrap();
+        bytes[7..11].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(crate::wasm_api::open_case(&bytes, PASS).is_err());
+    }
 }
