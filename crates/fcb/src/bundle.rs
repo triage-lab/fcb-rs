@@ -127,6 +127,20 @@ mod tests {
     }
 
     #[test]
+    fn pack_generates_fresh_salt_and_nonce() {
+        // Salt and nonce are random per pack: same params + payload + passphrase
+        // must still produce different sealed bytes. Nonce reuse would be a
+        // confidentiality break, so this guards against an accidental switch to
+        // fixed randomness.
+        let params = fast_params(BundleKind::Case);
+        let a = pack_bytes(&params, b"same payload", "pw").unwrap();
+        let b = pack_bytes(&params, b"same payload", "pw").unwrap();
+        assert_ne!(a, b, "salt/nonce must be fresh per pack");
+        assert_eq!(open_bytes(&a, "pw").unwrap().2, b"same payload");
+        assert_eq!(open_bytes(&b, "pw").unwrap().2, b"same payload");
+    }
+
+    #[test]
     fn wrong_passphrase_rejected_at_bundle_level() {
         let params = fast_params(BundleKind::Case);
         let bytes = pack_bytes(&params, b"x", "hunter2").unwrap();
