@@ -84,6 +84,7 @@ CI（[`.github/workflows/ci.yml`](./.github/workflows/ci.yml)）會在每次 pus
 
 ## 文件入口
 
+- **整合指南（消費端 getting-started）**：[`docs/fcb-integration-guide.md`](./docs/fcb-integration-guide.md)
 - **協定 wire format**：[`docs/fcb-wire-format.md`](./docs/fcb-wire-format.md)
 - **資料模型 / stream schema**：[`docs/fcb-data-model.md`](./docs/fcb-data-model.md)
 - **逐位元 reference / golden vectors / error 目錄**：[`docs/fcb-reference.md`](./docs/fcb-reference.md)
