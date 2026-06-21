@@ -3,7 +3,9 @@ name = "fcb-wasm"
 version = "0.1.0"
 edition = "2021"
 description = "WASM / JS bindings for the FCB codec — the in-browser workbench bridge"
-license = "MIT OR Apache-2.0"
+license = "ECL-2.0"
+repository = "https://github.com/triage-lab/fcb-rs"
+readme = "../../README.md"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
