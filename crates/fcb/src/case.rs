@@ -280,4 +280,44 @@ mod tests {
         let input = case_with(manifest(&[("s0", 1), ("s0", 1)]), single);
         assert!(matches!(pack_case(&input, "pw"), Err(FcbError::Malformed(_))));
     }
+
+    #[test]
+    fn pack_case_accepts_zero_record_stream() {
+        // A stream declared with 0 records and an empty payload records vec is
+        // internally consistent, so the invariant accepts it (whether an empty
+        // stream is meaningful is a separate concern, not this check's job).
+        let p = CasePayload {
+            streams: vec![StreamData {
+                id: "s0".into(),
+                records: vec![],
+            }],
+        };
+        let input = case_with(manifest(&[("s0", 0)]), p);
+        assert!(pack_case(&input, "pw").is_ok());
+    }
+
+    #[test]
+    fn pack_case_rejects_mismatch_in_non_first_stream() {
+        // The check is position-independent: a count mismatch in the LAST
+        // declared stream is caught just like one in the first.
+        let p = CasePayload {
+            streams: vec![
+                StreamData {
+                    id: "s0".into(),
+                    records: vec![Value::Text("a".into())],
+                },
+                StreamData {
+                    id: "s1".into(),
+                    records: vec![Value::Text("b".into())],
+                },
+                StreamData {
+                    id: "s2".into(),
+                    records: vec![Value::Text("c".into())],
+                },
+            ],
+        };
+        // Manifest declares s2 has 2 records, but the payload carries 1.
+        let input = case_with(manifest(&[("s0", 1), ("s1", 1), ("s2", 2)]), p);
+        assert!(matches!(pack_case(&input, "pw"), Err(FcbError::Malformed(_))));
+    }
 }
