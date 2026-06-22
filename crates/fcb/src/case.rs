@@ -66,6 +66,54 @@ struct CaseMeta<'a> {
     task: Option<&'a TaskSpec>,
 }
 
+/// Producer invariant: the manifest's declared stream id set and per-stream
+/// record counts MUST agree with the payload exactly. A producer that seals a
+/// `.case` whose manifest disagrees with the payload would mint a bundle whose
+/// inconsistency only surfaces (partially) at open time, so reject it loudly at
+/// pack time instead. A single pass over the payload builds an id -> count map
+/// (rejecting a repeated payload id), then each manifest entry is consumed from
+/// it — which also catches a missing payload stream and a duplicate manifest id
+/// — and any unconsumed payload stream is one the manifest never declared.
+fn check_manifest_matches_payload(
+    manifest: &[StreamManifest],
+    payload: &CasePayload,
+) -> Result<()> {
+    use std::collections::HashMap;
+    let mut counts: HashMap<&str, usize> = HashMap::with_capacity(payload.streams.len());
+    for stream in &payload.streams {
+        if counts.insert(stream.id.as_str(), stream.records.len()).is_some() {
+            return Err(FcbError::Malformed(format!(
+                "payload declares stream id {:?} more than once",
+                stream.id
+            )));
+        }
+    }
+    for entry in manifest {
+        match counts.remove(entry.id.as_str()) {
+            None => {
+                return Err(FcbError::Malformed(format!(
+                    "manifest declares stream {:?} with no matching payload stream",
+                    entry.id
+                )))
+            }
+            Some(actual) if actual as u64 != entry.records => {
+                return Err(FcbError::Malformed(format!(
+                    "manifest declares {} records for stream {:?} but payload carries {}",
+                    entry.records, entry.id, actual
+                )))
+            }
+            Some(_) => {}
+        }
+    }
+    if let Some(extra) = counts.keys().next() {
+        return Err(FcbError::Malformed(format!(
+            "payload carries stream {:?} not declared in the manifest",
+            extra
+        )));
+    }
+    Ok(())
+}
+
 /// Pack an evidence case into a sealed `.case` bundle (KIND=case).
 ///
 /// The header `bundle_hash` is set to the canonical hash of the payload, the
@@ -78,6 +126,9 @@ pub fn pack_case(input: &CaseInput, passphrase: &str) -> Result<Vec<u8>> {
     if input.manifest.is_empty() {
         return Err(FcbError::Malformed("case has no streams".into()));
     }
+    // The manifest (in the plaintext header) and the payload streams must agree
+    // on the stream id set and per-stream record counts before we seal anything.
+    check_manifest_matches_payload(&input.manifest, &input.payload)?;
     let payload_bytes = input.payload.to_canonical_bytes()?;
     let bundle_hash = binding::compute_bundle_hash(&payload_bytes);
     let meta = cbor::to_value(&CaseMeta {
@@ -148,5 +199,85 @@ mod tests {
             pack_case(&input, "pw"),
             Err(FcbError::Malformed(_))
         ));
+    }
+
+    fn manifest(entries: &[(&str, u64)]) -> Vec<StreamManifest> {
+        entries
+            .iter()
+            .map(|(id, n)| StreamManifest {
+                id: (*id).into(),
+                stream_type: "fcb.json.v1".into(),
+                records: *n,
+            })
+            .collect()
+    }
+
+    fn case_with(manifest: Vec<StreamManifest>, payload: CasePayload) -> CaseInput {
+        CaseInput {
+            case_id: "c".into(),
+            manifest,
+            task: None,
+            payload,
+        }
+    }
+
+    #[test]
+    fn pack_case_accepts_consistent_manifest() {
+        // payload() carries s0 (1 record) and s1 (1 record); a manifest that
+        // declares exactly those ids and counts packs fine.
+        let input = case_with(manifest(&[("s0", 1), ("s1", 1)]), payload());
+        assert!(pack_case(&input, "pw").is_ok());
+    }
+
+    #[test]
+    fn pack_case_rejects_record_count_mismatch() {
+        // Manifest claims s0 has 2 records, but the payload carries 1.
+        let input = case_with(manifest(&[("s0", 2), ("s1", 1)]), payload());
+        assert!(matches!(pack_case(&input, "pw"), Err(FcbError::Malformed(_))));
+    }
+
+    #[test]
+    fn pack_case_rejects_extra_payload_stream() {
+        // Manifest declares only s0; payload carries s0 and s1.
+        let input = case_with(manifest(&[("s0", 1)]), payload());
+        assert!(matches!(pack_case(&input, "pw"), Err(FcbError::Malformed(_))));
+    }
+
+    #[test]
+    fn pack_case_rejects_missing_payload_stream() {
+        // Manifest declares s0, s1, s2; payload only carries s0 and s1.
+        let input = case_with(manifest(&[("s0", 1), ("s1", 1), ("s2", 1)]), payload());
+        assert!(matches!(pack_case(&input, "pw"), Err(FcbError::Malformed(_))));
+    }
+
+    #[test]
+    fn pack_case_rejects_duplicate_payload_id() {
+        let dup = CasePayload {
+            streams: vec![
+                StreamData {
+                    id: "s0".into(),
+                    records: vec![Value::Text("a".into())],
+                },
+                StreamData {
+                    id: "s0".into(),
+                    records: vec![Value::Text("b".into())],
+                },
+            ],
+        };
+        let input = case_with(manifest(&[("s0", 1)]), dup);
+        assert!(matches!(pack_case(&input, "pw"), Err(FcbError::Malformed(_))));
+    }
+
+    #[test]
+    fn pack_case_rejects_duplicate_manifest_id() {
+        // Manifest repeats s0; payload has a single s0.
+        let single = CasePayload {
+            streams: vec![StreamData {
+                id: "s0".into(),
+                records: vec![Value::Text("a".into())],
+            }],
+        };
+        let input = case_with(manifest(&[("s0", 1), ("s0", 1)]), single);
+        assert!(matches!(pack_case(&input, "pw"), Err(FcbError::Malformed(_))));
     }
 }
