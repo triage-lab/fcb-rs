@@ -39,7 +39,7 @@ ciborium = "0.2"   # 操作 CBOR Value 時需要
 `peek_header` 只讀明文 header，**不需 passphrase**。很適合在解鎖前先告訴使用者這是哪個 case、哪個證物版本、有哪些 stream：
 
 ```rust
-use fcb::container::{peek_header, BundleKind};
+use fcb::container::peek_header;
 use fcb::evidence::manifest_from_meta;
 use fcb::task::task_from_meta;
 
@@ -56,7 +56,7 @@ let task = task_from_meta(&header.meta)?;           // Option<TaskSpec>
 
 ```rust
 use fcb::bundle::open_bytes;
-use fcb::case::CasePayload;
+use fcb::case::{case_bundle_hash, CasePayload};
 use fcb::container::BundleKind;
 use fcb::evidence::{decode_streams, manifest_from_meta};
 
@@ -65,6 +65,14 @@ assert_eq!(kind, BundleKind::Case);
 
 let manifest = manifest_from_meta(&header.meta)?;
 let case: CasePayload = fcb::cbor::decode(&payload)?;        // { streams: [StreamData] }
+
+// ⚠️ 核心 open 路徑「不」重算內容定址。`open_bytes` 的 AEAD 只證明 header 未被
+// 竄改，並不會把解密後 payload 重算出來的 bundle_hash 拿去和 header.bundle_hash
+// 比對——自動重算只發生在 WASM bridge 的 `openCase`（見 §2.2）。Rust 消費端若
+// 要這層「header ↔ payload 一致」的保護，必須自己重算 canonical hash 並比對：
+let recomputed = case_bundle_hash(&case)?;                  // canonical SHA-256
+assert_eq!(recomputed, header.bundle_hash);                // 不符＝偽造／毀損，拒收這份 .case
+
 let streams = decode_streams(&manifest, &case.streams)?;    // Vec<DecodedStream>
 
 for s in &streams {
@@ -106,7 +114,9 @@ let input = CaseInput { case_id: "demo-2026-01".into(), manifest, task: Some(tas
 let case_bytes = pack_case(&input, "passphrase")?;   // 寫成 .case 檔
 ```
 
-> stream 記錄得符合對應 type 的 schema（syslog / netflow / json 見 data-model §3）。`pack_case` 不會檢查記錄形狀，schema 是生產端自己的責任。
+> **`pack_case` 會強制 manifest 與 payload 一致。** 封檔前它會檢查 manifest 宣告的 stream id 集合與每條 stream 的記錄筆數（`records`），必須與 payload 雙向完全相符——manifest 缺漏某條 payload stream、payload 多出 manifest 未宣告的 stream、重複的 stream id、或 `records` 數字對不上 payload 實際筆數，任一情況都會以 `FcbError::Malformed` 退回，不會封出一份 manifest 與 payload 互相矛盾的 bundle。所以從 JS 走 `packCase` 出題時，把 `records:` 寫錯數字會收到 `malformed`（見 §2.4）。
+>
+> 它檢查的是「id 與筆數是否吻合」，**不是**記錄的 schema 形狀：stream 記錄得符合對應 type 的 schema（syslog / netflow / json 見 data-model §3），但 `pack_case` 不驗記錄欄位形狀，schema 是生產端自己的責任。
 
 ### 1.5 產出 / 開封 `.casework`（`Submission`）
 
@@ -132,7 +142,7 @@ assert_eq!(back, work);
 
 ### 1.6 驗 binding（題目 ↔ 作答）
 
-收件平台**必須**確認學生作答對應的就是同一個 case、同一份證物版本。因為 header 沒被認證，這一步是安全關鍵，前面「安全須知」也提過：
+收件平台**必須**確認學生作答對應的就是同一個 case、同一份證物版本。AEAD 雖然保證 header「未被竄改」，卻**不**保證學生填進去的 `case_id`／`bundle_hash` 真的對得上你手上的那份 `.case`——所以這步 binding 驗證仍是必要、不是選用的（前面「安全須知」也是這個道理）：
 
 ```rust
 use fcb::binding::{verify_binding, BindingCheck};
@@ -171,6 +181,8 @@ wasm-pack build crates/fcb-wasm --target web       # 瀏覽器 ESM
 | `computeBundleHash(bytes)` | `sha256:<hex>` 內容雜湊。 |
 | `verifyBinding(workCaseId, workBundleHash, caseId, caseBundleHash)` | 回 `"match"` / `"case-mismatch"` / `"evidence-version-mismatch"`。 |
 | `workKey(caseId)` | 本地儲存分割鍵 `fcb:work:<caseId>`。 |
+
+> **版本協商（version negotiation）。** `peekHeader` 回的 `PeekInfo` 帶三個版本欄位：`container_version`（容器框架版本，目前等於常數 `CONTAINER_VERSION` = 1）、`header_schema_ver`（header 物件結構版本，目前 = 1）、以及 `min_reader`（開這份 bundle 所需的最低 reader 版本）。本 codec 寫出的 bundle 一律標 `min_reader` = `READER_VERSION`（= 2，自 header 被納入 AEAD AAD 認證起）。當某份 bundle 的 `min_reader` 高於某個 reader 支援的版本，`peekHeader`／`openCase`／`openSubmission` 會以 `UnsupportedVersion`（kind `unsupported-version`）**乾淨地拒絕**而非誤解析。換句話說，`min_reader = 2` 代表只支援 v1（header 尚未認證）的舊 reader 會直接被擋下、提示升級，而不會把這份檔當成壞檔或誤讀它的 header。
 
 ### 2.3 薄 adapter（對齊 bridge 風格）
 
@@ -248,7 +260,7 @@ const caseBytes = fcb.packCase(caseObject, "passphrase");   // Uint8Array，可�
 
 兩個 footgun：
 
-- **Footgun 1：manifest 每筆用鍵 `type`，不是 `stream_type`。** wire 與 JS 物件裡這個欄位都叫 `type`（Rust 端才是 `StreamManifest.stream_type`）。寫成 `stream_type` 會被當成缺 `type`，反序列化就壞——這個會回 kind `malformed`。
+- **Footgun 1：manifest 每筆用鍵 `type`，不是 `stream_type`。** wire 與 JS 物件裡這個欄位都叫 `type`（Rust 端的型別欄位才是 `StreamManifest.stream_type`）。寫成 `stream_type` 會被當成缺 `type`，在 bridge 的 serde 反序列化階段就失敗——**注意：此時丟出的是一個沒有 `kind` 屬性的純字串 error**。`packCase` 的反序列化失敗走的是 `JsValue::from_str`，**不**經把 `FcbError` 映成帶 kind 的 `to_js_error`，所以 `e.kind` 是 `undefined`，前面 §2.3 adapter 的 `e.kind ?? "unknown"` fallback 會給你 `"unknown"`，**不是** `"malformed"`。對照下面的 Footgun 2：那是反序列化**之後**、在 `pack_case` 內部才丟出的真正 `FcbError::Malformed`，會經 `to_js_error` 帶上穩定 kind `"malformed"`。
 - **Footgun 2：超過 JS safe-integer 範圍的整數 record 值必須用 `BigInt` 傳。** record 裡的整數若超過 `2^53-1`（`Number.MAX_SAFE_INTEGER`），用普通 JS number 傳會被編成 CBOR float，canonical 位元組因此與 native producer 不同。pack 邊界現在會**主動擋下**這種「整數值卻超出 safe range 的 plain number」，回 kind `malformed`（不再靜默退化成 float、也不會默默產出對不上的 `bundle_hash`）。超過範圍的整數**務必**以 `BigInt` 傳入（例如 `9007199254784000n`，serde-wasm-bindgen 會編成 CBOR 整數）；safe range 內的整數照常用 number 即可。
 
 ---

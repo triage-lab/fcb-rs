@@ -13,7 +13,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+      - name: cargo fmt (formatting gate)
+        run: cargo fmt --all --check
+      - name: cargo clippy (lint gate, warnings denied)
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: cargo test (golden vectors + round-trips)
         run: cargo test --workspace
-      - name: wasm build smoke (native == wasm codec)
-        run: cargo build -p fcb --target wasm32-unknown-unknown
+      - name: wasm build smoke (fcb-wasm bridge on wasm32)
+        run: cargo build -p fcb-wasm --target wasm32-unknown-unknown

@@ -279,9 +279,9 @@ pub fn work_key(case_id: &str) -> String {
 mod wasm_api {
     use wasm_bindgen::prelude::*;
 
+    use fcb::case::CaseInput;
     use fcb::error::FcbError;
     use fcb::submission::Submission;
-    use fcb::case::CaseInput;
 
     /// Serialize a value to a JS object (maps become plain objects, not `Map`).
     fn to_js(v: &impl serde::Serialize) -> Result<JsValue, JsValue> {
@@ -333,8 +333,8 @@ mod wasm_api {
     /// Pack a case (a JS object) into a sealed `.case` bundle.
     #[wasm_bindgen(js_name = packCase)]
     pub fn pack_case(input: JsValue, passphrase: &str) -> Result<Vec<u8>, JsValue> {
-        let case_input: CaseInput = serde_wasm_bindgen::from_value(input)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let case_input: CaseInput =
+            serde_wasm_bindgen::from_value(input).map_err(|e| JsValue::from_str(&e.to_string()))?;
         crate::pack_case(&case_input, passphrase).map_err(to_js_error)
     }
 
@@ -558,7 +558,10 @@ mod tests {
                 }],
             },
         };
-        assert!(matches!(pack_case(&input, PASS), Err(FcbError::Malformed(_))));
+        assert!(matches!(
+            pack_case(&input, PASS),
+            Err(FcbError::Malformed(_))
+        ));
         // A safe-range integer record packs fine.
         let ok = CaseInput {
             payload: CasePayload {
@@ -576,7 +579,10 @@ mod tests {
     fn pack_work_rejects_out_of_safe_range_integer() {
         let mut work = sample_submission();
         work.activity = vec![Value::Float(9_007_199_254_740_992.0)];
-        assert!(matches!(pack_work(&work, PASS), Err(FcbError::Malformed(_))));
+        assert!(matches!(
+            pack_work(&work, PASS),
+            Err(FcbError::Malformed(_))
+        ));
     }
 
     #[test]

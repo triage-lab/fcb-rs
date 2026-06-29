@@ -366,7 +366,10 @@ mod tests {
         bytes.extend_from_slice(&CONTAINER_VERSION.to_le_bytes());
         bytes.extend_from_slice(&u32::MAX.to_le_bytes());
         bytes.extend_from_slice(b"short");
-        assert!(matches!(read_container(&bytes), Err(FcbError::Malformed(_))));
+        assert!(matches!(
+            read_container(&bytes),
+            Err(FcbError::Malformed(_))
+        ));
         assert!(matches!(peek_header(&bytes), Err(FcbError::Malformed(_))));
     }
 }

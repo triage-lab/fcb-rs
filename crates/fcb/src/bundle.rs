@@ -5,9 +5,7 @@
 use ciborium::value::Value;
 
 use crate::compress;
-use crate::container::{
-    encode_prefix, read_container, AeadParams, BundleKind, Header, KdfParams,
-};
+use crate::container::{encode_prefix, read_container, AeadParams, BundleKind, Header, KdfParams};
 use crate::crypto::{self, NONCE_LEN};
 use crate::error::{FcbError, Result};
 

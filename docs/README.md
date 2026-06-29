@@ -56,14 +56,14 @@ FCB 文件刻意拆成兩種：一種寫給人讀，叫導讀；另一種寫給�
 2. **`crates/fcb/tests/vectors.rs` 與 `crates/fcb/tests/stream_types.rs`** — byte-exact golden vectors
    與 round-trip 契約。`FROZEN_CASE_HEX` / `FROZEN_WORK_HEX` 把 on-disk 位元組鎖死，`stream_types.rs`
    則鎖死 `fcb.syslog.v1` 的記錄欄位集。任何 FCB 實作都得能解開這些 vector，重建出來的位元組必須**一模一樣**。
-3. **`openspec/specs/fcb-*` 與其餘 capability spec**（共 **7 個 capability**，見下節）— 正規的行為契約。
+3. **`openspec/specs/fcb-*` 與其餘 spec**（共 **11 個 spec**，其中 **7 個**是 `fcb-*`，見下節）— 正規的行為契約。
 4. **本目錄 `docs/`** — 是精修對象，**不是真相來源**。它的工作是補上 specs 沒涵蓋到的 byte-level、crypto、
    schema 細節，再把散落各處的事實彙整成可以照著做的導讀與規格。文件跟上面三層對不上時，要修的是文件。
 
-### 7 個 capability spec（`openspec/specs/`）
+### 11 個 spec（`openspec/specs/`，其中 7 個 `fcb-*`）
 
-`openspec/specs/` 底下總共 **7 個 capability**。其中 **5 個是 `fcb-*`**，跟 FCB codec 直接相關；剩下 **2 個是
-消費端協定**，雖然不在 codec 範圍內，但同樣屬於 FCB 生態：
+`openspec/specs/` 底下總共 **11 個 spec**。其中 **7 個是 `fcb-*`**，跟 FCB codec 直接相關；剩下 **4 個是
+專案文件／治理 spec**，規範 OSS 文件、整合指南、參考文件與語言標準：
 
 | Capability | 類別 | 範圍 |
 |------------|------|------|
@@ -72,11 +72,15 @@ FCB 文件刻意拆成兩種：一種寫給人讀，叫導讀；另一種寫給�
 | `fcb-task-spec` | fcb-* | 內嵌 task 定義（`report_mode` steps／freeform、`steps`）與**答案安全不變量**（學生 build 零答案）。 |
 | `fcb-submission` | fcb-* | `.casework`（KIND=work）格式、student identity、以 `case_id` + `bundle_hash` 做 case binding。 |
 | `fcb-stream-types` | fcb-* | `fcb.syslog.v1` 記錄 schema、演進／相容規則、worked examples（RFC 5424／3164／minimal）。 |
-| `plugin-protocol` | 非 fcb（消費端） | 消費端 plugin 介面（parser／view／query-engine／tool／ai-provider 等 kind 與 manifest）。**不影響 `.case` 位元組格式**。 |
-| `query-model` | 非 fcb（消費端） | 消費端查詢模型（pipeline AST 作為查詢契約）。**不影響 `.case` 位元組格式**。 |
+| `fcb-case-builder` | fcb-* | `.case` 產出契約：`pack_case` 一步封裝，並強制 manifest 與 payload 的 stream id 集合與記錄計數一致。 |
+| `fcb-wasm-bridge` | fcb-* | WASM/JS bridge surface 契約（`peekHeader`／`openCase`／`openSubmission`／`packSubmission`／`packCase`／`computeBundleHash`／`verifyBinding`／`workKey`）與 pack 邊界數值確定性契約。 |
+| `doc-language-standard` | 非 fcb（文件） | 文件語言標準：台灣繁體中文用語規範。 |
+| `oss-project-docs` | 非 fcb（文件） | OSS 治理文件：README／LICENSE／CONTRIBUTING／CODE_OF_CONDUCT／SECURITY 的內容契約。 |
+| `user-integration-guide` | 非 fcb（文件） | 消費端整合指南（Rust + WASM/JS）的內容契約。 |
+| `user-reference-and-changelog` | 非 fcb（文件） | 參考文件、cookbook 與 CHANGELOG 的內容契約。 |
 
-> 對 case builder 作者來說，真正相關的是那 **5 個 `fcb-*`**。`plugin-protocol` 和 `query-model` 講的是
-> 消費端怎麼**呈現或查詢**證物，跟「怎麼把 `.case` 打包成正確位元組」是兩回事。
+> 對 case builder 作者來說，最直接相關的是那 **7 個 `fcb-*`**。其餘 4 個是規範本專案**文件與治理**的 spec，
+> 不影響「怎麼把 `.case` 打包成正確位元組」。
 >
 > 一個小提醒：目前各 spec 的 `## Purpose` 段還是 archive 自動產生的 `TBD` 佔位字串，尚未填寫；但它們的
 > `## Requirements` 段已經是正式契約了。
@@ -88,29 +92,15 @@ FCB 文件刻意拆成兩種：一種寫給人讀，叫導讀；另一種寫給�
 ### 用 Rust 寫：直接相依 `fcb` crate
 
 > **如果用 Rust 寫 case builder，最省事的做法就是直接相依 `fcb` crate**（它已經是
-> `crate-type = ["cdylib", "rlib"]`）。走參考實作的公開路徑來組 bundle，CBOR 不會漂移：
->
-> - 打包：`bundle::pack_bytes(&BundleParams, payload, passphrase)`（隨機 salt/nonce、compress-then-encrypt）。
-> - 組 header `meta`：`evidence::manifest_to_meta(&[StreamManifest])` 出 `{ streams: [...] }`，
->   `task::task_to_meta(&TaskSpec)` 出 `{ task: ... }`，兩者合併成 `.case` 的 `meta`。
->   **⚠️ 合併時 `streams` 一定要排在 `task` 前面**，不然 CBOR map 的 key 順序就跟 golden vector 對不上、
->   做不到 byte-exact（golden 用的 `CaseMeta { streams, task }`，宣告序本來就是 streams→task，見
->   `crates/fcb/tests/vectors.rs:31-35,85`）；細節見 [`fcb-wire-format.md`](./fcb-wire-format.md) §2 規則 2b。
->   這兩個 helper 各自只產出一把 key（`evidence::manifest_to_meta` → `evidence.rs:61-65`、
->   `task::task_to_meta` → `task.rs:54-56`），怎麼合併由你的呼叫端決定，crate 不會替你排。
-> - 答案安全防呆：`task::contains_answer_fields(&value)` 可在打包前 assert 沒夾帶答案 key。
+> `crate-type = ["cdylib", "rlib"]`）。產出 `.case` 的**權威路徑**只有一條：`fcb::case::pack_case`。它走
+> 參考實作的公開 API，替你算 canonical `bundle_hash`、組好 header `meta`、把 CBOR map 的 key 順序排對、
+> 產生隨機 salt/nonce 再封裝，CBOR 完全不會漂移——直接照下方「最小 `.case` 打包範例」抄即可。真要逐欄
+> 看底層怎麼運作，再翻後面的「進階：手動逐欄組信封」。
 >
 > 有一點要先知道：`lib.rs` **並沒有**把 `pack`/`open` 之類的頂層函式 re-export 出來，它只 re-export 了
-> `error::{FcbError, Result}`。高階函式全都待在子模組裡（`bundle::`、`evidence::`、`task::`、`submission::`、
-> `binding::`），得走模組路徑來呼叫。所以你的 `use` 區塊大概會長這樣：
->
-> ```rust
-> use fcb::bundle::{self, BundleParams};
-> use fcb::container::BundleKind;
-> use fcb::evidence::{manifest_to_meta, StreamData, StreamManifest};
-> use fcb::task::{task_to_meta, ReportMode, TaskSpec, TaskStep};
-> use fcb::cbor;
-> ```
+> `error::{FcbError, Result}`。高階函式全都待在子模組裡（`case::`、`bundle::`、`evidence::`、`task::`、
+> `submission::`、`binding::`），一律走模組路徑來呼叫——`use` 區塊長相見下方範例。要在打包前防呆，可加
+> `task::contains_answer_fields(&value)`，assert payload／meta 沒夾帶答案 key。
 
 ### 可直接照抄的最小 `.case` 打包範例（Rust）
 
@@ -147,19 +137,6 @@ FCB 文件刻意拆成兩種：一種寫給人讀，叫導讀；另一種寫給�
 >     pack_case(&input, "passphrase").unwrap()
 > }
 > ```
->
-> 如果你想逐欄看清楚底層怎麼用 `bundle::pack_bytes` 加上 `*_to_meta` 手動組信封，範例在
-> `crates/fcb/tests/stream_types.rs:88-115`，裡面有 RFC 5424、3164、minimal 三筆 worked example。
-
-### 用非 Rust 語言寫：照 `fcb-reference.md` 逐位元對齊
-
-> 只有當你要用**非 Rust 語言**重寫 codec，才需要照著 [`fcb-reference.md`](./fcb-reference.md) 逐位元對齊
-> （想要白話脈絡，再搭配 [`fcb-wire-format.md`](./fcb-wire-format.md) 和
-> [`fcb-data-model.md`](./fcb-data-model.md)）。這裡有一個**最容易踩到的互通陷阱**：ciborium 會把 `Vec<u8>`
-> （也就是 `salt`、`nonce`、`key_check`）編成 **CBOR array of uint**（major type 4），而**不是** byte string
-> （major type 2）。這點寫錯，header 就跟參考實作不相容了。驗收標準其實很單純：產出的位元組只要能通過
-> `cargo test -p fcb`（尤其是 `case_vector_is_byte_stable` 和 `frozen_case_vector_decodes_to_expected_structure`），
-> 就算相容。
 
 ### `.case` 產出：用 crate 的 `fcb::case`（生產／消費共用）
 
@@ -173,22 +150,70 @@ FCB 文件刻意拆成兩種：一種寫給人讀，叫導讀；另一種寫給�
 >    這樣一來，同一份證物不管 salt/nonce 怎麼變，算出來的 hash 都一樣。回歸測試在 `crates/fcb/tests/vectors.rs`
 >    的 `case_canonical_bundle_hash_is_frozen` 和 `pack_case_round_trips_and_binds_hash`。
 
+### 進階：手動逐欄組信封（底層路徑，多數人用不到）
+
+> **只有想看清楚 `pack_case` 底層怎麼運作時才需要這段。** 一般情況直接用上面的 `fcb::case::pack_case` 就好，
+> 下面這條手動路徑只是把它拆開給你看——它的 CBOR key-order footgun 在你走 `pack_case` 時根本碰不到：
+>
+> - 打包：`bundle::pack_bytes(&BundleParams, payload, passphrase)`（隨機 salt/nonce、compress-then-encrypt）。
+> - 組 header `meta`：`evidence::manifest_to_meta(&[StreamManifest])` 出 `{ streams: [...] }`，
+>   `task::task_to_meta(&TaskSpec)` 出 `{ task: ... }`，兩者合併成 `.case` 的 `meta`。這兩個 helper（`evidence.rs`
+>   的 `manifest_to_meta()`、`task.rs` 的 `task_to_meta()`）各自只產出一把 key，怎麼合併由你的呼叫端決定，
+>   crate 不會替你排。
+>   **⚠️ 手動合併時 `streams` 一定要排在 `task` 前面**，不然 CBOR map 的 key 順序就跟 golden vector 對不上、
+>   做不到 byte-exact（golden 用的 `CaseMeta { streams, task }`，宣告序本來就是 streams→task，見
+>   `crates/fcb/tests/vectors.rs` 的 `CaseMeta` 結構與 `build_case()`）；細節見
+>   [`fcb-wire-format.md`](./fcb-wire-format.md) §2 規則 2b。**走 `fcb::case::pack_case` 就不必擔心這個**——它會
+>   自動把 `streams→task` 排好，footgun 形同不存在。
+> - 答案安全防呆：`task::contains_answer_fields(&value)` 可在打包前 assert 沒夾帶答案 key。
+>
+> 走手動路徑的 `use` 區塊大概會長這樣：
+>
+> ```rust
+> use fcb::bundle::{self, BundleParams};
+> use fcb::container::BundleKind;
+> use fcb::evidence::{manifest_to_meta, StreamData, StreamManifest};
+> use fcb::task::{task_to_meta, ReportMode, TaskSpec, TaskStep};
+> use fcb::cbor;
+> ```
+>
+> 想看底層手動組信封的可跑範例，看 `crates/fcb/tests/stream_types.rs` 的 `round_trip()` 輔助函式——它用
+> `bundle::pack_bytes` ＋ `manifest_to_meta` 手動打包再 open；搭配 `rfc5424_record()` / `rfc3164_record()` /
+> `minimal_record()` 三筆 `fcb.syslog.v1` worked example（RFC 5424、3164、minimal），由
+> `syslog_v1_records_round_trip_byte_faithfully()` 釘住 round-trip 的 byte-faithful 不變式。
+
+### 用非 Rust 語言寫：照 `fcb-reference.md` 逐位元對齊
+
+> 只有當你要用**非 Rust 語言**重寫 codec，才需要照著 [`fcb-reference.md`](./fcb-reference.md) 逐位元對齊
+> （想要白話脈絡，再搭配 [`fcb-wire-format.md`](./fcb-wire-format.md) 和
+> [`fcb-data-model.md`](./fcb-data-model.md)）。這裡有一個**最容易踩到的互通陷阱**：ciborium 會把 `Vec<u8>`
+> （也就是 `salt`、`nonce`、`key_check`）編成 **CBOR array of uint**（major type 4），而**不是** byte string
+> （major type 2）。這點寫錯，header 就跟參考實作不相容了。驗收標準其實很單純：產出的位元組只要能通過
+> `cargo test -p fcb`（尤其是 `case_vector_is_byte_stable` 和 `frozen_case_vector_decodes_to_expected_structure`），
+> 就算相容。
+
 ---
 
 ## 已知缺口（Known Gaps）
 
 這裡老實列出**還沒實作、還沒凍結**的部分，免得你把現況估得太樂觀：
 
-1. **WASM 綁定目前只有 `fcb_version`。** `crates/fcb/src/wasm.rs` 只導出 `fcb_version()`，還沒有
-   `openBundle`、`packSubmission` 這類更完整的 bindings（補充一句：`fcb-wasm` bridge crate 那邊的
-   native core 已經比較完整，見 `crates/fcb-wasm/src/lib.rs`）。
-2. **plugin registry 是消費端的概念，本 crate 並沒有實作。** `DecodedStream` 的註解提到未知 type 會落到
-   generic fallback「或交給 a registered plugin」（`crates/fcb/src/evidence.rs:50`），可是 crate 裡**根本沒有
-   任何 registry 程式碼**。plugin 介面是 `plugin-protocol`（消費端 spec）的事，跟 `.case` 位元組格式無關。
-3. **payload 多出 manifest 沒列的 stream 時，行為沒測過。** `decode_streams` 是以 manifest 驅動迭代、再用 `id`
-   去反查 payload。manifest 找不到對應的 payload 會回 `Malformed`；但**反過來**，payload 裡有 manifest 沒宣告的
-   多餘 stream，目前會被靜默忽略，而且**沒有任何測試**斷言這是刻意設計（`crates/fcb/src/evidence.rs:77-93`，
-   未證實）。重寫 codec 或自訂 case builder 時，別依賴這個還沒凍結的行為。
+1. **消費面的 WASM bridge 已經完整；只剩核心 `fcb` crate 自己的 `wasm.rs` 是 stub。** 給 browser workbench
+   用的完整 JS surface 都在 `fcb-wasm` bridge crate（`peekHeader`、`openCase`、`openSubmission`、
+   `packSubmission`、`packCase`、`computeBundleHash`、`verifyBinding`、`workKey`），已隨 v0.1.0 一起釋出。真正
+   還沒長肉的只有核心 `fcb` crate 內建的 `wasm.rs`——它目前只導出 `fcb_version()`，當作 `wasm-bindgen` 邊界
+   能編的最小證明。要在瀏覽器裡跑完整 codec，請相依 `fcb-wasm`，別期待 `fcb::wasm` 會有 `openCase`/`packCase`。
+2. **plugin registry 是消費端的概念，本 crate 並沒有實作。** `evidence.rs` 的 `DecodedStream` 註解提到未知
+   type 會落到 generic fallback「或交給 a registered plugin」，可是 crate 裡**根本沒有任何 registry 程式碼**。
+   plugin 介面是消費端 spec 的事，跟 `.case` 位元組格式無關。
+3. **reader 端遇到 payload 多出 manifest 沒列的 stream 時，行為還沒凍結（僅 reader 一側）。** 先講已經補強的
+   那一半：**產出端的 `case::pack_case` 已經強制 manifest 與 payload 的 stream id 集合雙向相等、而且逐筆比對
+   records 筆數**——多一條、少一條、重複、或筆數對不上，全部擋成 `Malformed`，並有對應的 reject 測試（見
+   `case.rs` 的 `pack_case`）。沒凍結的只剩 **reader 端**：`evidence.rs` 的 `decode_streams()` 以 manifest
+   驅動迭代、再用 `id` 去反查 payload。manifest 找不到對應的 payload 會回 `Malformed`；但**反過來**，payload
+   裡有 manifest 沒宣告的多餘 stream，`decode_streams()` 目前會**靜默忽略**，而且**沒有任何測試**斷言這是
+   刻意設計。重寫 codec 或寫自己的 reader 時，別依賴這個還沒凍結的 reader-side 行為；產出端只要走
+   `pack_case`，這種 payload superset 根本到不了 reader。
 
 > ✅ 這一批已經關掉的缺口：**`pack_case` / `CasePayload` 公開 helper**、**canonical `bundle_hash` 凍結**、
 > **`fcb.netflow.v1` / `fcb.json.v1` 記錄 schema 凍結**——分別見上方「`.case` 產出」段、`fcb::case` 模組，

@@ -22,7 +22,7 @@
 
 這樣會開啟一條只有維護者看得到的私密通道（GitHub Security Advisory）。
 
-要是你沒辦法用 GitHub 私密回報，也可以寄 email 給維護者：**claude@fhsh.tp.edu.tw**，主旨請標上 `[fcb-rs security]`。
+要是你沒辦法用 GitHub 私密回報，也可以寄 email 給維護者：**0826@fhsh.tp.edu.tw**，主旨請標上 `[fcb-rs security]`。
 
 回報時請盡量提供：
 
@@ -45,6 +45,6 @@
 - 明文 header **已被 AEAD 認證**：整段明文 container 前綴（magic、KIND、container_version、hdr_len、以及完整 header CBOR）會綁進 XChaCha20-Poly1305 的 AAD（additional authenticated data）。竄改 header 任一欄位（含 task prompt、manifest、`case_id`、`bundle_hash`）都會讓 `open` 失敗為 `Corrupt`。此外 `.case` 開封（`open_case`）會用解密後的 canonical payload **重算 `bundle_hash` 並和 header 值比對**，不符即 `Corrupt`，等於驗證了內容定址。
 - `bundle_hash` 是**明文 payload 的 SHA-256**，存在不需 passphrase 就能讀的明文 header 裡。對**低熵／可猜的 payload**，它等於一個**確認 oracle**——能猜中 payload 的人可藉雜湊確認猜測。高熵／大型 payload 不受影響。
 - **binding 對 re-pack 敏感**：因 `bundle_hash` 是內容定址，case payload **任何**重新封裝（即使只改一個 byte）都會得到新雜湊，讓既有 submission 的 binding 變成 `evidence-version-mismatch`。發題後請**凍結** case payload。
-- **manifest.records 僅供參考**：stream manifest 宣告的 `records` 筆數是 advisory——pack 與 open 都**不會**拿它和實際記錄數核對；消費端應以開封後的 payload 為準推導筆數，不要信 peek 階段宣告的值。
+- **manifest.records：producer 強制、reader 不重驗**：`pack_case` 封裝時**會**強制 manifest 宣告的每條 stream `records` 筆數與 payload 實際筆數一致，不符即以 `Malformed` 拒絕；但 reader 端 `decode_streams` 是 manifest-driven、**不**重新核對筆數，故消費端仍應以開封後的 payload 為準推導筆數，不要只信 peek 階段宣告的值。
 
 如果你覺得這些邊界在某些情境下會變成實際風險，還是很歡迎走前面的私密管道來回報討論。

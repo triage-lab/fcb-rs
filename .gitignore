@@ -3,3 +3,6 @@ Cargo.lock.bak
 .spectra/
 openspec/.vector-search.db*
 .understand-anything/
+
+# wasm-pack generated package artifacts (README.md, LICENSE, *.wasm, *.js, ...)
+crates/fcb-wasm/pkg/

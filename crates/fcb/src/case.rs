@@ -81,7 +81,10 @@ fn check_manifest_matches_payload(
     use std::collections::HashMap;
     let mut counts: HashMap<&str, usize> = HashMap::with_capacity(payload.streams.len());
     for stream in &payload.streams {
-        if counts.insert(stream.id.as_str(), stream.records.len()).is_some() {
+        if counts
+            .insert(stream.id.as_str(), stream.records.len())
+            .is_some()
+        {
             return Err(FcbError::Malformed(format!(
                 "payload declares stream id {:?} more than once",
                 stream.id
@@ -233,21 +236,30 @@ mod tests {
     fn pack_case_rejects_record_count_mismatch() {
         // Manifest claims s0 has 2 records, but the payload carries 1.
         let input = case_with(manifest(&[("s0", 2), ("s1", 1)]), payload());
-        assert!(matches!(pack_case(&input, "pw"), Err(FcbError::Malformed(_))));
+        assert!(matches!(
+            pack_case(&input, "pw"),
+            Err(FcbError::Malformed(_))
+        ));
     }
 
     #[test]
     fn pack_case_rejects_extra_payload_stream() {
         // Manifest declares only s0; payload carries s0 and s1.
         let input = case_with(manifest(&[("s0", 1)]), payload());
-        assert!(matches!(pack_case(&input, "pw"), Err(FcbError::Malformed(_))));
+        assert!(matches!(
+            pack_case(&input, "pw"),
+            Err(FcbError::Malformed(_))
+        ));
     }
 
     #[test]
     fn pack_case_rejects_missing_payload_stream() {
         // Manifest declares s0, s1, s2; payload only carries s0 and s1.
         let input = case_with(manifest(&[("s0", 1), ("s1", 1), ("s2", 1)]), payload());
-        assert!(matches!(pack_case(&input, "pw"), Err(FcbError::Malformed(_))));
+        assert!(matches!(
+            pack_case(&input, "pw"),
+            Err(FcbError::Malformed(_))
+        ));
     }
 
     #[test]
@@ -265,7 +277,10 @@ mod tests {
             ],
         };
         let input = case_with(manifest(&[("s0", 1)]), dup);
-        assert!(matches!(pack_case(&input, "pw"), Err(FcbError::Malformed(_))));
+        assert!(matches!(
+            pack_case(&input, "pw"),
+            Err(FcbError::Malformed(_))
+        ));
     }
 
     #[test]
@@ -278,7 +293,10 @@ mod tests {
             }],
         };
         let input = case_with(manifest(&[("s0", 1), ("s0", 1)]), single);
-        assert!(matches!(pack_case(&input, "pw"), Err(FcbError::Malformed(_))));
+        assert!(matches!(
+            pack_case(&input, "pw"),
+            Err(FcbError::Malformed(_))
+        ));
     }
 
     #[test]
@@ -318,6 +336,9 @@ mod tests {
         };
         // Manifest declares s2 has 2 records, but the payload carries 1.
         let input = case_with(manifest(&[("s0", 1), ("s1", 1), ("s2", 2)]), p);
-        assert!(matches!(pack_case(&input, "pw"), Err(FcbError::Malformed(_))));
+        assert!(matches!(
+            pack_case(&input, "pw"),
+            Err(FcbError::Malformed(_))
+        ));
     }
 }

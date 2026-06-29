@@ -71,7 +71,13 @@ fn nonce_from(nonce: &[u8]) -> Result<&XNonce> {
 pub fn seal(key: &[u8; KEY_LEN], nonce: &[u8], plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
     let nonce = nonce_from(nonce)?;
     cipher_for(key)
-        .encrypt(nonce, Payload { msg: plaintext, aad })
+        .encrypt(
+            nonce,
+            Payload {
+                msg: plaintext,
+                aad,
+            },
+        )
         .map_err(|_| FcbError::Malformed("AEAD encryption failure".into()))
 }
 
@@ -81,7 +87,13 @@ pub fn seal(key: &[u8; KEY_LEN], nonce: &[u8], plaintext: &[u8], aad: &[u8]) -> 
 pub fn open(key: &[u8; KEY_LEN], nonce: &[u8], ciphertext: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
     let nonce = nonce_from(nonce)?;
     cipher_for(key)
-        .decrypt(nonce, Payload { msg: ciphertext, aad })
+        .decrypt(
+            nonce,
+            Payload {
+                msg: ciphertext,
+                aad,
+            },
+        )
         .map_err(|_| FcbError::Corrupt)
 }
 

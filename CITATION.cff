@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use fcb-rs in your research, please cite it using the metadata in this file."
+title: "fcb-rs: Forensic Case Bundle codec"
+type: software
+authors:
+  - name: "The fcb-rs Authors"
+    email: 0826@fhsh.tp.edu.tw
+repository-code: "https://github.com/triage-lab/fcb-rs"
+url: "https://github.com/triage-lab/fcb-rs"
+license: ECL-2.0
+version: 0.1.0
+date-released: "2026-06-29"
+keywords:
+  - digital-forensics
+  - evidence-bundle
+  - codec
+  - education
