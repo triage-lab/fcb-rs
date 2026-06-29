@@ -15,7 +15,7 @@ workbench／教師審閱平台）寫進 `.casework` 的東西、兩者如何綁�
 > vector 為準。
 
 外層信封與密碼學的**主擁有者文件**是 [`fcb-wire-format.md`](./fcb-wire-format.md)；本檔為了自洽會重述
-container 佈局與 crypto 重點（§8–§12），但兩者數值必須一致，皆以 `crates/fcb` 原始碼為準。
+container 佈局（§4）與 crypto 重點（§9–§12），但兩者數值必須一致，皆以 `crates/fcb` 原始碼為準。
 
 ---
 
@@ -53,7 +53,7 @@ meta = {
 }
 ```
 
-`.casework` 的 `meta` 則固定是**空 map** `{}`（`Value::Map(vec![])`，見 `submission::pack_submission`），見 §7。
+`.casework` 的 `meta` 則固定是**空 map** `{}`（`Value::Map(vec![])`，見 `submission::pack_submission`），見 §6。
 
 > golden vector 用 `CaseMeta { streams, task }`（`tests/vectors.rs` 的 `CaseMeta` struct）凍結這個結構；
 > 解出來是 CBOR `a2`（map of 2）。
@@ -442,7 +442,7 @@ magic(4) | KIND(u8=1B) | container_version(u16 LE=2B) | hdr_len(u32 LE=4B)
 | 1 | `header_schema_ver` | `u16` | `header_schema_ver` | `1` | `Header.header_schema_ver`；`pack_bytes()` |
 | 2 | `min_reader` | `u16` | `min_reader` | `2`（AAD 格式） | `Header.min_reader`；`pack_bytes()` |
 | 3 | `case_id` | `String` | `case_id` | 由呼叫端帶入 | `Header.case_id` |
-| 4 | `bundle_hash` | `String` | `bundle_hash` | 由呼叫端帶入（§6） | `Header.bundle_hash` |
+| 4 | `bundle_hash` | `String` | `bundle_hash` | 由呼叫端帶入（§7） | `Header.bundle_hash` |
 | 5 | `kdf` | `KdfParams` | `kdf` | 見下 | `Header.kdf` |
 | 6 | `aead` | `AeadParams` | `aead` | 見下 | `Header.aead` |
 | 7 | `key_check` | `Vec<u8>` | `key_check` | KCV（32B，§10） | `Header.key_check` |
@@ -462,7 +462,7 @@ magic(4) | KIND(u8=1B) | container_version(u16 LE=2B) | hdr_len(u32 LE=4B)
 
 | # | 欄位 | 型別 | CBOR key | 寫入值 |
 |---|------|------|----------|--------|
-| 1 | `algo` | `String` | `algo` | `"xchacha20poly1305"`（`pack_bytes()` 寫入；**描述性，open 不驗證**，見 §11） |
+| 1 | `algo` | `String` | `algo` | `"xchacha20poly1305"`（`pack_bytes()` 寫入；**描述性，open 不驗證**，見 §10） |
 | 2 | `nonce` | `Vec<u8>` | `nonce` | 24 隨機 bytes |
 
 ### 5.1 ciborium 編碼慣例與陷阱（互通關鍵）
