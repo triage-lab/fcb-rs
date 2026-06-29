@@ -689,10 +689,10 @@ verify_binding（順序）:
 
 | Header 欄位 | CBOR marker / 值 | 解碼 | 出處（build 賦值處） |
 |-------------|------------------|------|------|
-| `header_schema_ver` | `01` | uint 1 | `vectors.rs` `build_case` |
-| `min_reader` | `02` | uint 2（AAD-authenticated 格式） | `vectors.rs` `build_case` |
-| `case_id` | text | `"acme-ir-2026-03"` | `vectors.rs` `build_case` |
-| `bundle_hash` | text | `"sha256:deadbeef"`（**假佔位值**） | `vectors.rs` `build_case` |
+| `header_schema_ver` | `01` | uint 1 | `vectors.rs` `build` |
+| `min_reader` | `02` | uint 2（AAD-authenticated 格式） | `vectors.rs` `build` |
+| `case_id` | text | `"acme-ir-2026-03"` | `vectors.rs` `build` |
+| `bundle_hash` | text | `"sha256:deadbeef"`（**假佔位值**） | `vectors.rs` `build` |
 | `kdf`（map(5)） | `a5` | — | `vectors.rs` `FROZEN_CASE_HEX` |
 | `kdf.algo` | text | `"argon2id"`（hex `686172676f6e326964`） | `vectors.rs` `build` |
 | `kdf.salt` | `90` + 16 uint | array(16) = SALT bytes | `vectors.rs` `build` |
