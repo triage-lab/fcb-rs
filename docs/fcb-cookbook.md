@@ -2,7 +2,7 @@
 
 任務導向的速查。每則 recipe 只給你兩樣東西：**目標**，以及**會用到哪些呼叫**。想看完整脈絡就翻 [`fcb-integration-guide.md`](./fcb-integration-guide.md)，想要逐位元的權威說法則查 [`fcb-reference.md`](./fcb-reference.md)、[`fcb-data-model.md`](./fcb-data-model.md)、[`fcb-wire-format.md`](./fcb-wire-format.md)。
 
-> 動手前先記住一件事（整合指南「安全須知」講得更細）：明文 header 現在**已被 AEAD AAD 認證**，竄改 header 任一欄位（含 `bundle_hash`）開封都會失敗為 `Corrupt`，`.case` 開封還會重算 `bundle_hash` 驗內容定址。即便如此，**收件端仍應驗 binding**——`open` 只能證明「這份檔案沒被動過」，不能證明「這份 submission 對得上你這一題」，後者要靠 `verify_binding`（Recipe 1–2）。
+> 動手前先記住一件事（整合指南「安全須知」講得更細）：明文 header 現在**已被 AEAD AAD 認證**，竄改 header 的內容欄位（含 `bundle_hash`）開封都會失敗為 `Corrupt`，`.case` 開封（fcb-wasm 的 `open_case`）還會重算 `bundle_hash` 驗內容定址。即便如此，**收件端仍應驗 binding**——`open` 只能證明「這份檔案沒被動過」，不能證明「這份 submission 對得上你這一題」，後者要靠 `verify_binding`（Recipe 1–2）。
 
 ---
 

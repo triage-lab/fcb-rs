@@ -376,7 +376,7 @@ open:    payload --AEAD decrypt--> zstd_frame --zstd decompress--> plaintext
 >   欄位沒被竄改、不保證它等於 payload 的 hash，故 `.case` 路徑額外重算。**`.casework` 不做此重算**——
 >   submission 的 header `bundle_hash` 是綁回其 case 的參照，不是 submission payload 的雜湊。
 > - **`key_check` 只認證「key 正確」**、**payload AEAD 認證「payload 未被動」、AAD 認證「header／前綴未被動」**。
-> - 證物版本綁定靠 `bundle_hash`（見 §5、data-model §5）；`.case` 路徑已由 `open_case` 重算驗證，
+> - 證物版本綁定靠 `bundle_hash`（見 §5；data-model §7「Binding」）；`.case` 路徑已由 `open_case` 重算驗證，
 >   低階 `compute_bundle_hash` 本身仍不強制涵蓋範圍。
 
 ---
@@ -453,7 +453,7 @@ primitive，對任意 bytes 算 hash；golden vector 的 header 仍用占位假�
 
 `verify_binding(...)` 回傳三態 `Match` / `CaseMismatch` / `EvidenceVersionMismatch`；work key 慣例
 `work_key(case_id) = "fcb:work:{case_id}"`。binding 的完整規則、`.casework` 的 `Submission` schema
-與 binding 三態語意一律見 [`fcb-data-model.md`](./fcb-data-model.md) §5。
+與 binding 三態語意一律見 [`fcb-data-model.md`](./fcb-data-model.md) §6（Submission schema）與 §7（Binding）。
 
 **canonical 定義（已凍結）：`bundle_hash = compute_bundle_hash(.case 的明文 payload bytes)`**，亦即壓縮／
 加密**之前**的證物序列化位元組。如此同一份證物無論 salt/nonce 為何都得到相同 hash，學生作品
@@ -511,7 +511,7 @@ stream 記錄的逐欄 schema、演進／相容規則一律見 [`fcb-data-model.
    `type`（如 `fcb.syslog.v1`，data-model §3.1）。
 2. **組 manifest**：每條 stream 一筆 `StreamManifest { id, type, records = len(records) }`
    （CBOR key 是 `"type"`）。
-3. **組 task spec**：`TaskSpec`（**零答案**，data-model §6）。
+3. **組 task spec**：`TaskSpec`（**零答案**，data-model §1.2 schema／§8 零答案不變量）。
 4. **`meta`**（明文）= CBOR `{ "streams": [manifest…], "task": TaskSpec }`（map(2) → 起頭 `a2`，`streams`
    在前；見 §2 規則 2b）。
 5. **`payload_plain`** = CBOR `{ "streams": [StreamData…] }`。此信封是**單欄 struct** 公開型別
@@ -544,7 +544,7 @@ stream 記錄的逐欄 schema、演進／相容規則一律見 [`fcb-data-model.
 > 真正的小數 float 都照常接受、且確定。詳見 §9「pack 邊界數值確定性契約」。
 
 > `.casework` 相同，差別只在：`KIND = 0x02`、`meta = {}`（空 map）、`payload_plain = CBOR(Submission)`
-> （見 data-model §4）。
+> （見 data-model §6）。
 >
 > ℹ️ **兩個 `.casework` byte-stable 向量。** `FROZEN_WORK_HEX` 凍結的是**測試專用的 3 欄
 > `WorkPayload { case_id, bundle_hash, report }`**（歷史向量保留）；library 真正會寫的 7 欄 `Submission`

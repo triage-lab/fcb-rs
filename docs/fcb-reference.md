@@ -737,7 +737,7 @@ verify_binding（順序）:
 | edr record（s1） | `Integer(7)` | 佔位 | `vectors.rs` `build_case` |
 | work report | `Text("freeform report")` | 佔位 | `vectors.rs` `build_work` |
 
-### 8.7 golden vector 測試
+### 8.8 golden vector 測試
 
 | 測試 | 斷言 | 出處 |
 |------|------|------|
@@ -840,4 +840,4 @@ Package：`fcb` `0.1.0`，edition `2021`，license `ECL-2.0`，`crate-type = ["c
 15. `open_submission` KIND-gated（只收 Work）；submission meta 恆為空 map。（§6.4）
 16. binding 優先序：case 身分 > evidence 版本（case_id 先檢查）。（§6.5）
 17. `bundle_hash` = `"sha256:" + lower_hex(SHA256(bytes))`，總長 71 chars；container/crypto 層不驗涵蓋範圍，但 `.case` 開檔路徑（`open_case`）會對解密後 payload **重算** canonical hash 並比對 header，不符 → `Corrupt`（`.casework` 的 header `bundle_hash` 是綁定參照、非 submission payload 之 hash，故不重算）。（§6.5；fcb-wasm `open_case`）
-18. golden vector byte 穩定：固定 salt/nonce 重建須產生相同 hex，否則「format drifted」測試失敗。（§8.7）
+18. golden vector byte 穩定：固定 salt/nonce 重建須產生相同 hex，否則「format drifted」測試失敗。（§8.8）

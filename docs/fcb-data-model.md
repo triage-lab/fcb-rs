@@ -108,7 +108,7 @@ TaskStep = {
 `report_mode` 是 `ReportMode` enum，標 `#[serde(rename_all = "lowercase")]`（`task.rs` 的 `ReportMode`），
 序列化為小寫 CBOR text `"steps"`／`"freeform"`。`TaskStep` 三個欄位（`id`／`prompt`／
 `answer_type`）皆 `String`、皆無 default、皆必填（`task.rs` 的 `TaskStep`）。**`TaskStep` 沒有任何答案欄位**——
-這是刻意的，見 §6 答案安全。`TaskSpec`／`TaskStep`／`ReportMode` 都 derive `Eq`。
+這是刻意的，見 §8 答案安全。`TaskSpec`／`TaskStep`／`ReportMode` 都 derive `Eq`。
 
 ---
 
