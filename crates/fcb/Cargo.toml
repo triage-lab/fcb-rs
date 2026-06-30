@@ -20,6 +20,13 @@ documentation = "https://docs.rs/fcb"
 rust-version = "1.87"
 
 [lib]
+# `cdylib` is intentionally retained alongside `rlib` (removal is out of scope
+# here — see this change's Non-Goals): the wasm32-only `#[wasm_bindgen]
+# fcb_version()` stub in src/wasm.rs is surfaced through fcb-wasm and consumed by
+# downstream browser-arena (`bridge.version()`), so dropping cdylib could
+# silently break that consumer. Native Rust dependents link the `rlib` form;
+# `cdylib` only materializes a shared-library artifact for a direct
+# `cargo build -p fcb`.
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]

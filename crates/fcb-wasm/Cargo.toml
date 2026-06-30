@@ -12,12 +12,12 @@ authors = ["The fcb-rs Authors"]
 documentation = "https://docs.rs/fcb-wasm"
 rust-version = "1.87"
 
-# The entire JS-facing API (peekHeader, openCase, packCase, …) lives behind
-# `#[cfg(target_arch = "wasm32")]`, so docs.rs must build for wasm32 — otherwise
-# the default x86_64 build would render an almost-empty page.
-[package.metadata.docs.rs]
-default-target = "wasm32-unknown-unknown"
-targets = ["wasm32-unknown-unknown"]
+# No `[package.metadata.docs.rs]` target override is set: fcb-wasm's public Rust
+# API (peek, open_case, pack_case, …) is NOT cfg-gated, so it renders fully on
+# the default x86_64 docs.rs build. The JS bindings (peekHeader, openCase,
+# packCase, …) live in a private, wasm32-only `mod wasm_api` that rustdoc never
+# emits on any target. Forcing docs.rs to wasm32-unknown-unknown would add
+# cross-compile fragility (a failed wasm build = zero docs) with no docs benefit.
 
 [lib]
 crate-type = ["cdylib", "rlib"]
