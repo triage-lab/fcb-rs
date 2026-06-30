@@ -6,12 +6,17 @@ description = "WASM / JS bindings for the FCB codec — the in-browser workbench
 license = "ECL-2.0"
 repository = "https://github.com/triage-lab/fcb-rs"
 readme = "../../README.md"
+keywords = ["forensics", "wasm", "cbor", "codec", "evidence"]
+categories = ["wasm", "encoding", "cryptography"]
+authors = ["The fcb-rs Authors"]
+documentation = "https://docs.rs/fcb-wasm"
+rust-version = "1.74"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-fcb = { path = "../fcb" }
+fcb = { path = "../fcb", version = "0.1.0" }
 serde = { version = "1", features = ["derive"] }
 ciborium = "0.2"
 

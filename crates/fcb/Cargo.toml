@@ -6,6 +6,11 @@ description = "Forensic Case Bundle (FCB) codec — container, passphrase crypto
 license = "ECL-2.0"
 repository = "https://github.com/triage-lab/fcb-rs"
 readme = "../../README.md"
+keywords = ["forensics", "cbor", "codec", "evidence", "encryption"]
+categories = ["encoding", "cryptography", "wasm"]
+authors = ["The fcb-rs Authors"]
+documentation = "https://docs.rs/fcb"
+rust-version = "1.74"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
