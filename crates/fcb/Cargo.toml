@@ -12,11 +12,8 @@ authors = ["The fcb-rs Authors"]
 documentation = "https://docs.rs/fcb"
 # MSRV floor: 1.87 is the highest declared rust-version among the locked
 # dependencies — set by ruzstd 0.8.3 (twox-hash 2.1.2 = 1.81, wasm-bindgen 0.2
-# = 1.77, thiserror 2 = 1.68, argon2 0.5 = 1.65). Cargo.lock pins these resolved
-# versions, but the caret ranges above (e.g. ruzstd = "0.8") still admit future
-# patch releases whose MSRV could climb past 1.87 after a `cargo update`. There
-# is intentionally no MSRV-enforcement gate in this change; the pinned-toolchain
-# CI check that catches such drift is owned by reproducible-wasm-npm-pipeline.
+# = 1.77, thiserror 2 = 1.68, argon2 0.5 = 1.65). CI's msrv job builds the
+# committed Cargo.lock under a pinned 1.87 toolchain to enforce this floor.
 rust-version = "1.87"
 
 [lib]

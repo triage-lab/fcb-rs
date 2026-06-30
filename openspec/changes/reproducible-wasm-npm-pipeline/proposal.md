@@ -6,7 +6,7 @@ CI 目前只用 `cargo build -p fcb-wasm --target wasm32-unknown-unknown` 當 wa
 
 - CI 以 pinned 版本的 wasm-pack，對 fcb-wasm 做 release/最佳化 build，涵蓋 web 與 nodejs 兩個 target，取代現有單一 `cargo build` smoke，使 CI 產出與下游 refresh 流程一致、可重現的產物。
 - CI 執行 fcb-wasm 的 wasm-bindgen_test 套件（`wasm-pack test --node`），讓 JS 邊界的行為保證每次 push/PR 都被驗證。
-- CI 新增 MSRV 關卡：以 pinned toolchain（1.74，對齊 prep-crates-io-publish 宣告的 rust-version）build workspace，使宣告的最低 Rust 版本長期不漂移。
+- CI 新增 MSRV 關卡：以 pinned toolchain（1.87，對齊各 crate 宣告的 rust-version；起草時的 1.74 已因 locked dependency ruzstd 0.8.3 提升至 1.87）對 committed Cargo.lock 編譯 workspace，驗證宣告的最低 Rust 版本確實可建（deterministic，僅依 committed lock）。
 
 ## Non-Goals
 

@@ -8,7 +8,7 @@
 
 ## 3. CI 加入 MSRV gate
 
-- [x] 3.1 （Requirement: CI enforces the documented quality gate）在 .github/workflows/ci.yml 加入獨立 job/step：以 `dtolnay/rust-toolchain@1.87` 安裝 pinned toolchain 並執行 `cargo build --workspace`，使宣告的 MSRV 長期被驗證、不漂移。注意：本任務起草時對齊 prep-crates-io-publish 宣告的 `rust-version = "1.74"`，但程式碼已將各 crate 的 `rust-version` 提升至 1.87（locked dependency ruzstd 0.8.3 所致，見 crates/fcb/Cargo.toml 註解）；spec 要求 pin「matching the crates' declared minimum supported Rust version」，故 gate 改 pin 1.87（pin 1.74 會因 declared 1.87 而 hard-error、永遠紅燈）。行為：workspace 在 1.87 下能 build，否則 CI fail。驗證：CI run log 顯示 1.87 job 綠；本機 `cargo +1.87 build --workspace` 通過。
+- [x] 3.1 （Requirement: CI enforces the documented quality gate）在 .github/workflows/ci.yml 加入獨立 job/step：以 `dtolnay/rust-toolchain@1.87` 安裝 pinned toolchain 並對 committed Cargo.lock 執行 `cargo test --workspace --locked --no-run`（編 lib/bin/test targets）與 `cargo build -p fcb-wasm --locked --target wasm32-unknown-unknown`（涵蓋 fcb-wasm 的 wasm32-gated deps），驗證宣告的 MSRV 下限確實可建。本 gate 為 deterministic、僅依 committed lock，不做 `cargo update` 漂移偵測或 cron，以維持本 change 的可重現性（caret-range 未來漂移屬獨立議題，不在此 gate）。注意：本任務起草時對齊 prep-crates-io-publish 宣告的 `rust-version = "1.74"`，但程式碼已將各 crate 的 `rust-version` 提升至 1.87（locked dependency ruzstd 0.8.3 所致，見 crates/fcb/Cargo.toml 註解）；spec 要求 pin「matching the crates' declared minimum supported Rust version」，故 gate 改 pin 1.87（pin 1.74 會因 declared 1.87 而 hard-error、永遠紅燈）。行為：workspace 在 1.87 下能編，否則 CI fail。驗證：CI run log 顯示 1.87 job 綠；本機 `cargo +1.87 test --workspace --locked --no-run` 通過。
 
 ## 4. 驗證整體 CI gate 完整且不破壞既有關卡
 
