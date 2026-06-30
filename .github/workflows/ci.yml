@@ -4,6 +4,14 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # Weekly MSRV-drift watch. The caret dependency ranges (e.g. ruzstd = "0.8")
+    # admit future patch releases whose declared rust-version could climb past
+    # our MSRV floor (1.87). Such a release lands on crates.io with no push/PR
+    # here, so without a scheduled run the msrv job's `cargo update` drift gate
+    # below would only fire on the next unrelated commit. This cron makes the
+    # gate proactively re-resolve the caret ranges once a week.
+    - cron: '0 6 * * 1'
 
 jobs:
   test:
@@ -36,7 +44,22 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.87
         with:
           targets: wasm32-unknown-unknown
-      - name: cargo test --no-run (MSRV gate, pinned toolchain matching declared rust-version; compiles lib/bin/test targets)
+      # Phase 1 — committed Cargo.lock: the shipped lock builds at the declared
+      # MSRV. `--locked` asserts the lock is in sync and is used as-is.
+      - name: cargo test --no-run (MSRV gate, committed Cargo.lock, pinned toolchain matching declared rust-version; compiles lib/bin/test targets)
+        run: cargo test --workspace --locked --no-run
+      - name: cargo build wasm32 (MSRV gate, committed Cargo.lock, for fcb-wasm's wasm32-gated deps)
+        run: cargo build -p fcb-wasm --locked --target wasm32-unknown-unknown
+      # Phase 2 — fresh resolve: re-resolve the caret ranges to their latest
+      # semver-compatible versions (what a downstream `cargo add fcb` with no
+      # lock would pick) and rebuild under the same pinned 1.87 toolchain. If a
+      # newly-published patch release of a (possibly transitive) dependency
+      # declares a rust-version above our MSRV floor, cargo errors here — this is
+      # the upstream-drift detection that crates/fcb/Cargo.toml's comment assigns
+      # to this gate. The updated lock is ephemeral and never committed.
+      - name: cargo update (re-resolve caret ranges to latest for MSRV-drift detection)
+        run: cargo update
+      - name: cargo test --no-run (MSRV drift gate, freshly resolved deps)
         run: cargo test --workspace --no-run
-      - name: cargo build wasm32 (MSRV gate for fcb-wasm's wasm32-gated deps)
+      - name: cargo build wasm32 (MSRV drift gate, freshly resolved deps, fcb-wasm's wasm32-gated deps)
         run: cargo build -p fcb-wasm --target wasm32-unknown-unknown
