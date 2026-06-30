@@ -10,11 +10,11 @@
 
 ## 3. 補齊 fcb 的 crates.io metadata
 
-- [x] 3.1 [P] （Requirement: Publishable crate manifests carry crates.io metadata）在 crates/fcb/Cargo.toml 的 [package] 補上以下欄位，使 fcb 可被發現且宣告 MSRV：`keywords = ["forensics", "cbor", "codec", "evidence", "encryption"]`、`categories = ["encoding", "cryptography", "wasm"]`、`authors = ["The fcb-rs Authors"]`、`documentation = "https://docs.rs/fcb"`、`rust-version = "1.74"`（保守值，≥ 所有相依 crate 已知 MSRV：edition 2021 約 1.56、thiserror 2 約 1.61、argon2 0.5 約 1.65；長期防漂移的 pinned-toolchain build gate 由 change reproducible-wasm-npm-pipeline 負責）。驗證：`cargo metadata --no-deps --format-version 1` 中 fcb 的 keywords/categories/rust_version 非空，且 `cargo package -p fcb --allow-dirty` verify build 仍通過。
+- [x] 3.1 [P] （Requirement: Publishable crate manifests carry crates.io metadata）在 crates/fcb/Cargo.toml 的 [package] 補上以下欄位，使 fcb 可被發現且宣告 MSRV：`keywords = ["forensics", "cbor", "codec", "evidence", "encryption"]`、`categories = ["encoding", "cryptography"]`（不重複宣告 "wasm"——JS/WASM 入口由專責的 fcb-wasm crate 持有，fcb 本身是 dual-target 原生 library）、`authors = ["The fcb-rs Authors"]`、`documentation = "https://docs.rs/fcb"`、`rust-version = "1.87"`（真實下限：以 Cargo.lock 已解析相依的最高已宣告 MSRV 為準——ruzstd 0.8.3 為 1.87，twox-hash 2.1.2 為 1.81，wasm-bindgen 0.2 為 1.77，thiserror 2 為 1.68，argon2 0.5 為 1.65；舊值 1.74 漏算 ruzstd/twox-hash 故為不實宣告；長期防漂移的 pinned-toolchain build gate 仍由 change reproducible-wasm-npm-pipeline 負責）。驗證：`cargo metadata --no-deps --format-version 1` 中 fcb 的 keywords/categories/rust_version 非空，且 `cargo package -p fcb --allow-dirty` verify build 仍通過。
 
 ## 4. 補齊 fcb-wasm 的 crates.io metadata
 
-- [x] 4.1 （Requirement: Publishable crate manifests carry crates.io metadata）在 crates/fcb-wasm/Cargo.toml 的 [package] 補上：`keywords = ["forensics", "wasm", "cbor", "codec", "evidence"]`、`categories = ["wasm", "encoding", "cryptography"]`、`authors = ["The fcb-rs Authors"]`、`documentation = "https://docs.rs/fcb-wasm"`、`rust-version = "1.74"`（與 fcb 一致）。驗證：`cargo metadata --no-deps --format-version 1` 中 fcb-wasm 對應欄位非空，且 `cargo package -p fcb-wasm --no-verify --allow-dirty` 成功。
+- [x] 4.1 （Requirement: Publishable crate manifests carry crates.io metadata）在 crates/fcb-wasm/Cargo.toml 的 [package] 補上：`keywords = ["forensics", "wasm", "cbor", "codec", "evidence"]`、`categories = ["wasm", "encoding", "cryptography"]`、`authors = ["The fcb-rs Authors"]`、`documentation = "https://docs.rs/fcb-wasm"`、`rust-version = "1.87"`（與 fcb 一致）。另補上 `[package.metadata.docs.rs]`（`default-target` 與 `targets` 皆設為 `wasm32-unknown-unknown`），否則整個 JS-facing API 因 `#[cfg(target_arch = "wasm32")]` 而被 docs.rs 預設的 x86_64 build 排除、docs.rs 頁面近乎空白。驗證：`cargo metadata --no-deps --format-version 1` 中 fcb-wasm 對應欄位非空，且 `cargo package -p fcb-wasm --no-verify --allow-dirty` 成功。
 
 ## 5. 整體回歸與發佈前置驗證
 
