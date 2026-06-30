@@ -20,5 +20,19 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: cargo test (golden vectors + round-trips)
         run: cargo test --workspace
-      - name: wasm build smoke (fcb-wasm bridge on wasm32)
-        run: cargo build -p fcb-wasm --target wasm32-unknown-unknown
+      - name: install wasm-pack (pinned 0.14.0 for reproducible wasm artifacts)
+        run: cargo install wasm-pack --version 0.14.0 --locked
+      - name: wasm-pack build (release, web target)
+        run: wasm-pack build crates/fcb-wasm --release --target web
+      - name: wasm-pack build (release, nodejs target)
+        run: wasm-pack build crates/fcb-wasm --release --target nodejs
+      - name: wasm-pack test (fcb-wasm wasm-bindgen suite, node runtime)
+        run: wasm-pack test --node crates/fcb-wasm
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.87
+      - name: cargo build (MSRV gate, pinned toolchain matching declared rust-version)
+        run: cargo build --workspace
