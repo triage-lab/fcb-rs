@@ -14,7 +14,7 @@
 
 ## 4. 補齊 fcb-wasm 的 crates.io metadata
 
-- [x] 4.1 （Requirement: Publishable crate manifests carry crates.io metadata）在 crates/fcb-wasm/Cargo.toml 的 [package] 補上：`keywords = ["forensics", "wasm", "cbor", "codec", "evidence"]`、`categories = ["wasm", "encoding", "cryptography"]`、`authors = ["The fcb-rs Authors"]`、`documentation = "https://docs.rs/fcb-wasm"`、`rust-version = "1.87"`（與 fcb 一致）。另補上 `[package.metadata.docs.rs]`（`default-target` 與 `targets` 皆設為 `wasm32-unknown-unknown`），否則整個 JS-facing API 因 `#[cfg(target_arch = "wasm32")]` 而被 docs.rs 預設的 x86_64 build 排除、docs.rs 頁面近乎空白。驗證：`cargo metadata --no-deps --format-version 1` 中 fcb-wasm 對應欄位非空，且 `cargo package --workspace --no-verify --allow-dirty` 成功（fcb 尚未發佈，須與 fcb 同批打包讓 sibling 由 workspace 解析；單獨 `-p fcb-wasm` 會在 registry 解析階段失敗）。
+- [x] 4.1 （Requirement: Publishable crate manifests carry crates.io metadata）在 crates/fcb-wasm/Cargo.toml 的 [package] 補上：`keywords = ["forensics", "wasm", "cbor", "codec", "evidence"]`、`categories = ["wasm", "encoding", "cryptography"]`、`authors = ["The fcb-rs Authors"]`、`documentation = "https://docs.rs/fcb-wasm"`、`rust-version = "1.87"`（與 fcb 一致）。不設 `[package.metadata.docs.rs]` override：fcb-wasm 的公開 Rust API 並未 cfg-gate（只有 private `mod wasm_api` 是 wasm32-only，rustdoc 本就不輸出），docs.rs 預設 x86_64 build 即可正常渲染完整公開 API。驗證：`cargo metadata --no-deps --format-version 1` 中 fcb-wasm 對應欄位非空，且 `cargo package --workspace --no-verify --allow-dirty` 成功（fcb 尚未發佈，須與 fcb 同批打包讓 sibling 由 workspace 解析；單獨 `-p fcb-wasm` 會在 registry 解析階段失敗）。
 
 ## 5. 整體回歸與發佈前置驗證
 
