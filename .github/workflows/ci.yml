@@ -26,8 +26,8 @@ jobs:
         run: wasm-pack build crates/fcb-wasm --release --target web
       - name: wasm-pack build (release, nodejs target)
         run: wasm-pack build crates/fcb-wasm --release --target nodejs
-      - name: wasm-pack test (fcb-wasm wasm-bindgen suite, node runtime)
-        run: wasm-pack test --node crates/fcb-wasm
+      - name: wasm-pack test (release, fcb-wasm wasm-bindgen suite, node runtime)
+        run: wasm-pack test --node --release crates/fcb-wasm
 
   msrv:
     runs-on: ubuntu-latest
