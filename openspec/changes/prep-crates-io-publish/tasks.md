@@ -6,7 +6,7 @@
 
 ## 2. 讓 fcb-wasm 可被打包（補 path dependency 版本）
 
-- [x] 2.1 （Requirement: Publishable crate manifests carry crates.io metadata）在 crates/fcb-wasm/Cargo.toml 將 `fcb = { path = "../fcb" }` 改為 `fcb = { path = "../fcb", version = "0.1.0" }`，使 fcb-wasm 不再因相依缺 version 而無法打包（fcb 需先行發佈才能跑完整 verify build）。驗證：`cargo package -p fcb-wasm --no-verify --allow-dirty` 成功，且不再出現 "does not specify a version" 錯誤。
+- [x] 2.1 （Requirement: Publishable crate manifests carry crates.io metadata）在 crates/fcb-wasm/Cargo.toml 將 `fcb = { path = "../fcb" }` 改為 `fcb = { path = "../fcb", version = "0.1.0" }`，使 fcb-wasm 不再因相依缺 version 而無法打包（fcb 需先行發佈才能跑完整 verify build）。驗證：`cargo package --workspace --no-verify --allow-dirty` 成功（連 fcb 一起打包，未發佈的 fcb sibling 由 workspace 本地解析），且不再出現 "does not specify a version" 錯誤。注意：fcb 尚未發佈到 crates.io 前，單獨跑 `cargo package -p fcb-wasm --no-verify --allow-dirty` 仍會失敗——`--no-verify` 只略過 compile、不略過相依的 registry 解析，故會回報 "no matching package named `fcb` found"；必須與 fcb 同批（`--workspace`）打包才能讓 sibling 由 workspace 本地解析。
 
 ## 3. 補齊 fcb 的 crates.io metadata
 
@@ -14,9 +14,9 @@
 
 ## 4. 補齊 fcb-wasm 的 crates.io metadata
 
-- [x] 4.1 （Requirement: Publishable crate manifests carry crates.io metadata）在 crates/fcb-wasm/Cargo.toml 的 [package] 補上：`keywords = ["forensics", "wasm", "cbor", "codec", "evidence"]`、`categories = ["wasm", "encoding", "cryptography"]`、`authors = ["The fcb-rs Authors"]`、`documentation = "https://docs.rs/fcb-wasm"`、`rust-version = "1.87"`（與 fcb 一致）。另補上 `[package.metadata.docs.rs]`（`default-target` 與 `targets` 皆設為 `wasm32-unknown-unknown`），否則整個 JS-facing API 因 `#[cfg(target_arch = "wasm32")]` 而被 docs.rs 預設的 x86_64 build 排除、docs.rs 頁面近乎空白。驗證：`cargo metadata --no-deps --format-version 1` 中 fcb-wasm 對應欄位非空，且 `cargo package -p fcb-wasm --no-verify --allow-dirty` 成功。
+- [x] 4.1 （Requirement: Publishable crate manifests carry crates.io metadata）在 crates/fcb-wasm/Cargo.toml 的 [package] 補上：`keywords = ["forensics", "wasm", "cbor", "codec", "evidence"]`、`categories = ["wasm", "encoding", "cryptography"]`、`authors = ["The fcb-rs Authors"]`、`documentation = "https://docs.rs/fcb-wasm"`、`rust-version = "1.87"`（與 fcb 一致）。另補上 `[package.metadata.docs.rs]`（`default-target` 與 `targets` 皆設為 `wasm32-unknown-unknown`），否則整個 JS-facing API 因 `#[cfg(target_arch = "wasm32")]` 而被 docs.rs 預設的 x86_64 build 排除、docs.rs 頁面近乎空白。驗證：`cargo metadata --no-deps --format-version 1` 中 fcb-wasm 對應欄位非空，且 `cargo package --workspace --no-verify --allow-dirty` 成功（fcb 尚未發佈，須與 fcb 同批打包讓 sibling 由 workspace 解析；單獨 `-p fcb-wasm` 會在 registry 解析階段失敗）。
 
 ## 5. 整體回歸與發佈前置驗證
 
 - [x] 5.1 確認 manifest 與 LICENSE 變更未造成回歸：`cargo build --workspace`、`cargo test --workspace`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`、`cargo fmt --all --check` 全數通過。
-- [x] 5.2 確認發佈前置達成且三份 LICENSE 一致：`cargo package -p fcb --allow-dirty` verify build 通過、`cargo package -p fcb-wasm --no-verify --allow-dirty` 通過，且 root LICENSE、crates/fcb/LICENSE、crates/fcb-wasm/LICENSE 的著作權行皆為 `Copyright 2026 The fcb-rs Authors`、無佔位字（`grep -REn "yyyy|name of copyright owner" LICENSE crates/fcb/LICENSE crates/fcb-wasm/LICENSE` 無輸出）。
+- [x] 5.2 確認發佈前置達成且三份 LICENSE 一致：`cargo package -p fcb --allow-dirty` verify build 通過、`cargo package --workspace --no-verify --allow-dirty` 通過（fcb 尚未發佈，fcb-wasm 須與 fcb 同批打包讓 sibling 由 workspace 解析；單獨 `-p fcb-wasm` 會在 registry 解析階段失敗），且 root LICENSE、crates/fcb/LICENSE、crates/fcb-wasm/LICENSE 的著作權行皆為 `Copyright 2026 The fcb-rs Authors`、無佔位字（`grep -REn "yyyy|name of copyright owner" LICENSE crates/fcb/LICENSE crates/fcb-wasm/LICENSE` 無輸出）。
