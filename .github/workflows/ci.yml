@@ -34,5 +34,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.87
+        with:
+          targets: wasm32-unknown-unknown
       - name: cargo build (MSRV gate, pinned toolchain matching declared rust-version)
         run: cargo build --workspace
+      - name: cargo build wasm32 (MSRV gate for fcb-wasm's wasm32-gated deps)
+        run: cargo build -p fcb-wasm --target wasm32-unknown-unknown
