@@ -30,7 +30,7 @@
 ```toml
 # Cargo.toml
 [dependencies]
-fcb = { git = "https://github.com/triage-lab/fcb-rs", package = "fcb" }
+fcb = "0.1.0"
 ```
 
 下面這段一次走完兩端：producer 打包一份 `.case`，consumer 再把它開封。
