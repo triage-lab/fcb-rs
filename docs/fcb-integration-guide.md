@@ -25,12 +25,12 @@
 
 ### 1.1 相依
 
-`fcb-rs` 還沒上 crates.io，所以用 Cargo git dependency 拉：
+`fcb` 已發佈到 crates.io，直接以版本相依即可：
 
 ```toml
 # Cargo.toml
 [dependencies]
-fcb = { git = "https://github.com/triage-lab/fcb-rs", package = "fcb" }
+fcb = "0.1.0"
 ciborium = "0.2"   # 操作 CBOR Value 時需要
 ```
 
