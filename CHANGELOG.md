@@ -6,6 +6,25 @@
 
 （尚無變更。）
 
+## 📦 [0.1.0] crates.io 發佈 provenance — 2026-07-06
+
+> `fcb` 0.1.0 正式發佈至 crates.io。crate tarball 由 commit `3fdd128` 打包，並以 annotated tag `fcb-v0.1.0` 標記其確切來源（`git checkout fcb-v0.1.0` 可重現 crates.io 上的 tarball）。本節補述發佈 provenance，codec 行為與下方 0.1.0 內容完全一致、未變。
+
+### 📦 發佈致能 (Packaging / Release)
+
+這些是最初 GitHub release（tag `v0.1.0` → commit `d84bbbb`，2026-06-29）到實際 crates.io 發佈（`3fdd128`）之間、讓套件「可被發佈」的變更，**均不改動 codec 行為**：
+
+- **LICENSE 補齊歸屬**：`crates/fcb/LICENSE`、`crates/fcb-wasm/LICENSE` 的 `Copyright [yyyy] [name of copyright owner]` 佔位字填為 `Copyright 2026 The fcb-rs Authors`（這是實際打包出貨的檔；`d84bbbb` 仍帶佔位字，故不可直接發佈）。
+- **crates.io metadata**：兩份 `Cargo.toml` 補 `keywords`／`categories`／`authors`／`documentation`，並宣告 `rust-version = "1.87"`（MSRV floor 由 `ruzstd 0.8.3` 決定）；`fcb-wasm` 的 `fcb` path dependency 補上 `version = "0.1.0"` 以利打包。
+- **可重現 CI pipeline**：`.github/workflows/ci.yml` 升級為 pinned `wasm-pack 0.14.0` 產出 web + nodejs 產物並跑 wasm-bindgen 測試，另加以 pinned 1.87 toolchain 強制 MSRV 的 deterministic（committed-lock）gate。
+- **文件對齊**：協定 docs 與整合指南對齊 0.1.0，README／整合指南的相依說明改用 `fcb = "0.1.0"`。
+
+### 📝 備註 (Provenance)
+
+- **兩個 0.1.0 座標**：crates.io tarball = `3fdd128`（tag `fcb-v0.1.0`）；git tag `v0.1.0` = `d84bbbb`（最初 GitHub release）。
+- **codec 行為 100% 等價**：`d84bbbb` 與 `3fdd128` 之間 `crates/fcb/src` 的所有 `.rs`，在移除空白與 trailing comma 後 hash 完全相同——差異純為 `rustfmt` 排版，無任何 token／行為變更。
+- **`v0.1.0` tag 刻意保留**：下游 `browser-arena` 的 submodule 釘在 `d84bbbb`，其 `codec-release-pinning` 規格要求所釘 commit 對應到某個 published release tag，故不移動 `v0.1.0`；改以新增 `fcb-v0.1.0` 標記 crate 來源，兩者並存、互不干擾。
+
 ## [0.1.0] - 2026-06-29
 
 > `fcb-rs` 首個正式 release：從 `browser-arena` 數位鑑識教學平台抽離為獨立 repo 後的第一批 codec 補完，加上完整的 OSS 與使用者文件。
@@ -44,5 +63,6 @@
 
 ---
 
-[Unreleased]: https://github.com/triage-lab/fcb-rs/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/triage-lab/fcb-rs/compare/fcb-v0.1.0...HEAD
+[fcb-v0.1.0]: https://github.com/triage-lab/fcb-rs/releases/tag/fcb-v0.1.0
 [0.1.0]: https://github.com/triage-lab/fcb-rs/releases/tag/v0.1.0
